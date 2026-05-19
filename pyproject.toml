@@ -1,0 +1,73 @@
+[project]
+name = "memory-graph-mcp"
+version = "0.4.1"
+description = "Unified semantic memory MCP server — cross-scope recall (memories+KG+wiki), auto-edge inference, auto-crystallized wiki, lifecycle management"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [
+    { name = "brayanfz013", email = "brayanfz013@gmail.com" },
+]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "memory",
+    "knowledge-graph",
+    "semantic-recall",
+    "duckdb",
+    "embeddings",
+    "ai-agents",
+    "claude-code",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "mcp>=1.0",
+    "duckdb>=1.1",
+    "pydantic-settings>=2.0",
+    "fastembed>=0.4",
+]
+
+[project.optional-dependencies]
+vertex = ["google-genai>=1.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/brayanfz013/memory-graph-mcp"
+Repository = "https://github.com/brayanfz013/memory-graph-mcp"
+Issues = "https://github.com/brayanfz013/memory-graph-mcp/issues"
+Changelog = "https://github.com/brayanfz013/memory-graph-mcp/blob/main/CHANGELOG.md"
+
+[project.scripts]
+memory-graph = "memory_graph.server:main"
+memory-graph-mcp = "memory_graph.server:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["memory_graph*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

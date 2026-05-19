@@ -1,0 +1,105 @@
+{
+  "$schema_note": "Each entry has: id (stable), language, seed (the finding to record before the test), query (what to recall), expected (the seed.id that should be the top-1 hit). The benchmark seeds N findings into a temp workspace, then for each query asserts that the right seed lands in top_k. Recall@1, Recall@5, MRR are computed across all queries.",
+  "seeds": [
+    {
+      "id": "duckdb_lock_retry",
+      "language": "en",
+      "finding_type": "solution",
+      "title": "DuckDB transient lock retry with exponential backoff",
+      "content": "When two processes write to the same DuckDB file, transient lock errors can occur. Wrap writes in a retry decorator with exponential backoff (0.2s base, 3 attempts). Detect transient errors by the message substrings 'could not set lock', 'database is locked', 'write-ahead log'."
+    },
+    {
+      "id": "fastembed_default",
+      "language": "en",
+      "finding_type": "decision",
+      "title": "Use fastembed as the default embedding provider",
+      "content": "fastembed runs locally with ONNX, no API key required, ships small models like BAAI/bge-small-en-v1.5 at 384 dimensions. This avoids vendor lock-in for the default install path."
+    },
+    {
+      "id": "workspace_scoped_db",
+      "language": "en",
+      "finding_type": "decision",
+      "title": "Workspace-scoped DuckDB storage",
+      "content": "Each repo gets its own .memory-graph/memory.duckdb file. Memory does not leak between projects. The workspace is resolved from MEMORY_GRAPH_WORKSPACE, CLAUDE_PROJECT_DIR, CODEX_WORKSPACE_DIR, or PWD."
+    },
+    {
+      "id": "kg_pagerank",
+      "language": "en",
+      "finding_type": "insight",
+      "title": "PageRank for influential node ranking",
+      "content": "Knowledge graph nodes accumulate edges from auto-inference and manual kg_add_edge calls. PageRank scores let us surface the most-referenced decisions when an agent starts a session."
+    },
+    {
+      "id": "wiki_crystallize",
+      "language": "en",
+      "finding_type": "pattern",
+      "title": "Auto-crystallize wiki on canonical promotion",
+      "content": "When a draft KG node is promoted to canonical via reuse_count >= 3, a wiki page is automatically generated from its tldr/brief/summary fields. This closes the loop from raw finding to curated long-form documentation."
+    },
+    {
+      "id": "ventas_query_crystal",
+      "language": "es",
+      "finding_type": "context",
+      "title": "Consultas de ventas en Crystal Lakehouse",
+      "content": "Las ventas operativas viven en gold_prd.gld_comercial.tbl_consolidado_ventas (876M filas). Usar siempre el MCP crystal-prd con prefijo lakehouse_, nunca fashionai-prd que es ecommerce externo."
+    },
+    {
+      "id": "trafico_presencial_es",
+      "language": "es",
+      "finding_type": "context",
+      "title": "Tráfico presencial en tiendas físicas",
+      "content": "Los conteos de visitantes por tienda están en gold_prd.gld_tiendas.tbl_trafico_presencial. Se usa para análisis de conversión, no para ventas online."
+    },
+    {
+      "id": "embedding_migration_plan_es",
+      "language": "es",
+      "finding_type": "decision",
+      "title": "Plan de migración entre proveedores de embedding",
+      "content": "Cuando cambiamos de modelo de embeddings, los vectores almacenados quedan incompatibles porque cambian las dimensiones. La estrategia es re-embedear todo el contenido en sitio: el texto fuente se conserva, solo se reemplazan los vectores."
+    },
+    {
+      "id": "mongodb_part_number_es",
+      "language": "es",
+      "finding_type": "pattern",
+      "title": "Filtrar siempre por part_number en MongoDB pipelines",
+      "content": "Para consultas sobre productos en la colección de pipelines de MongoDB, el filtro principal es part_number. En colecciones *_runs adicionar status='succeeded' y ordenar created_at desc."
+    },
+    {
+      "id": "auto_edge_threshold_en",
+      "language": "en",
+      "finding_type": "decision",
+      "title": "Auto-edge similarity threshold of 0.62",
+      "content": "When record_finding embeds a new node, it creates RELATED_TO edges to existing nodes only when cosine similarity exceeds 0.62. Below this threshold the relationship is too speculative and would add noise to PageRank."
+    },
+    {
+      "id": "schema_v5_embedding_meta_en",
+      "language": "en",
+      "finding_type": "solution",
+      "title": "Schema v5 adds embedding_meta table",
+      "content": "Schema version 5 introduces the embedding_meta table that records provider, model_name, dimensions, and active generation. This makes provider swaps detectable and reversible via the embedding_migrate tool."
+    },
+    {
+      "id": "fashionai_brandkit_es",
+      "language": "es",
+      "finding_type": "context",
+      "title": "Brandkit FashionAI vive en mcp/fashionai_brandkit",
+      "content": "El paquete fashionai_brandkit contiene la identidad de marca: tonos, paletas, lineamientos editoriales para reportes. Se invoca como MCP via python -m fashionai_brandkit.mcp.server."
+    }
+  ],
+  "queries": [
+    {"query": "how to fix duckdb concurrent write lock errors", "expected_seed_id": "duckdb_lock_retry", "language": "en"},
+    {"query": "duckdb backoff retry", "expected_seed_id": "duckdb_lock_retry", "language": "en"},
+    {"query": "default embedding model no api key needed", "expected_seed_id": "fastembed_default", "language": "en"},
+    {"query": "why does each project have its own memory database", "expected_seed_id": "workspace_scoped_db", "language": "en"},
+    {"query": "how is the most important decision ranked in the knowledge graph", "expected_seed_id": "kg_pagerank", "language": "en"},
+    {"query": "when does the wiki page get generated automatically", "expected_seed_id": "wiki_crystallize", "language": "en"},
+    {"query": "auto edge cosine similarity cutoff", "expected_seed_id": "auto_edge_threshold_en", "language": "en"},
+    {"query": "schema version 5 changes", "expected_seed_id": "schema_v5_embedding_meta_en", "language": "en"},
+
+    {"query": "dónde están las ventas de Crystal", "expected_seed_id": "ventas_query_crystal", "language": "es"},
+    {"query": "tabla de visitantes por tienda física", "expected_seed_id": "trafico_presencial_es", "language": "es"},
+    {"query": "qué pasa con los vectores cuando cambio de modelo de embedding", "expected_seed_id": "embedding_migration_plan_es", "language": "es"},
+    {"query": "filtros recomendados para consultas mongodb", "expected_seed_id": "mongodb_part_number_es", "language": "es"},
+    {"query": "paleta y tonos de marca para reportes", "expected_seed_id": "fashionai_brandkit_es", "language": "es"}
+  ]
+}

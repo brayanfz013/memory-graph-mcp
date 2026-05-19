@@ -1,0 +1,13 @@
+{
+  "$comment": "Drop this in any project as .mcp.json (Claude Code) or copy contents under the .vscode/mcp.json 'servers' key for VS Code Copilot. Uses MEMORY_GRAPH_WORKSPACE so the per-repo DuckDB lives in <workspace>/.memory-graph/.",
+  "mcpServers": {
+    "memory-graph": {
+      "type": "stdio",
+      "command": "memory-graph",
+      "env": {
+        "MEMORY_GRAPH_WORKSPACE": "${workspaceFolder}"
+      },
+      "customInstructions": "MANDATORY at task start: recall(query=<task>, top_k=5). After solving: record_finding(finding_type, title, content, related_files, tags). See PROTOCOL.md for the full operating manual."
+    }
+  }
+}

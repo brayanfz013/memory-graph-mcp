@@ -1,0 +1,30 @@
+{
+  "name": "memory-graph",
+  "version": "0.4.1",
+  "description": "Unified semantic memory for AI agents — per-repo DuckDB store with semantic recall, typed knowledge graph, auto-crystallized wiki, cross-agent coordination, and pluggable embedding providers (fastembed/ollama/vertex) with built-in benchmark + migration tooling. Ships with the usage protocol as a bundled skill.",
+  "author": {
+    "name": "brayanfz013",
+    "email": "brayanfz013@gmail.com"
+  },
+  "homepage": "https://github.com/brayanfz013/memory-graph-mcp",
+  "repository": "https://github.com/brayanfz013/memory-graph-mcp",
+  "license": "Apache-2.0",
+  "keywords": [
+    "memory",
+    "knowledge-graph",
+    "semantic-recall",
+    "mcp",
+    "duckdb",
+    "embeddings"
+  ],
+  "components": {
+    "mcpServers": [".mcp.json"],
+    "skills": ["skills/memory-graph"],
+    "commands": ["commands/memory-recall.md"]
+  },
+  "requirements": {
+    "python": ">=3.11",
+    "claudeCode": ">=2.0"
+  },
+  "installNotes": "After install, set MEMORY_GRAPH_WORKSPACE to your project root (or rely on auto-detection from CLAUDE_PROJECT_DIR). The DuckDB store is created lazily at <workspace>/.memory-graph/memory.duckdb on first call."
+}

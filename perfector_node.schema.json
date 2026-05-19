@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "perfector_node.schema.json",
+  "title": "Perfector Node",
+  "description": "Canonical entity with multiple projections: vectorial (recall), graph (relations/PageRank), documental (wiki/audit), and compressed (low-token context). All projections share a single perfector_id.",
+  "type": "object",
+  "required": ["perfector_id", "node_type", "status", "title"],
+  "properties": {
+    "perfector_id": {
+      "type": "string",
+      "pattern": "^(decision|solution|problem|tool|pattern|entity)\\.[a-z0-9][a-z0-9-]*[a-z0-9]$",
+      "description": "Stable canonical ID: {node_type}.{slug}. Unique across the entire knowledge base. Example: decision.use-duckdb-lock-retry"
+    },
+    "node_type": {
+      "type": "string",
+      "enum": ["Decision", "Solution", "Problem", "Tool", "Pattern", "Entity"],
+      "description": "Classification of the knowledge entity."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "canonical", "superseded"],
+      "default": "draft",
+      "description": "Lifecycle state. draft → canonical (after reuse threshold). canonical → superseded (when replaced)."
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Human-readable title of the finding/decision/entity."
+    },
+    "tldr_32": {
+      "type": ["string", "null"],
+      "description": "Ultra-compressed summary (~32 words, ~40 tokens). Used for list views and quick context injection."
+    },
+    "brief_96": {
+      "type": ["string", "null"],
+      "description": "Short summary (~96 words, ~120 tokens). Used for standard context and recall results."
+    },
+    "summary_256": {
+      "type": ["string", "null"],
+      "description": "Extended summary (~256 words, ~320 tokens). Used when more context is needed without reading full content."
+    },
+    "memory_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Reference to the semantic memory entry (memories table UUID)."
+    },
+    "wiki_page": {
+      "type": ["string", "null"],
+      "description": "Relative path to the compiled wiki page. Example: .wiki/pages/decision-use-duckdb-lock-retry.md"
+    },
+    "raw_sources": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "Paths to archived raw source materials in .wiki/raw/."
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rel_type", "target"],
+        "properties": {
+          "rel_type": {
+            "type": "string",
+            "enum": ["SOLVES", "CAUSED_BY", "DEPENDS_ON", "RELATED_TO", "USES_TOOL", "SUPERSEDES"]
+          },
+          "target": {
+            "type": "string",
+            "description": "perfector_id or node_id of the related entity."
+          }
+        }
+      },
+      "default": [],
+      "description": "Declared relationships to other entities."
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "MCP tools relevant to this entity."
+        },
+        "commands": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "Shell commands associated with this entity."
+        },
+        "files": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "Source files involved in this entity."
+        }
+      },
+      "default": {},
+      "description": "Execution context — which tools, commands, and files relate to this entity."
+    },
+    "ranking": {
+      "type": "object",
+      "properties": {
+        "pagerank": {
+          "type": "number",
+          "default": 0.0,
+          "description": "PageRank score from the knowledge graph."
+        },
+        "reuse_count": {
+          "type": "integer",
+          "default": 0,
+          "description": "Number of times this entity was recalled/referenced."
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.0,
+          "description": "Confidence score (0-1). Increases with validation and reuse."
+        },
+        "recency_score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.0,
+          "description": "Time-decay score. Higher = more recent."
+        }
+      },
+      "default": {},
+      "description": "Ranking signals for retrieval prioritization."
+    },
+    "freshness": {
+      "type": "object",
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the entity was first created."
+        },
+        "last_validated_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "When the entity was last confirmed as still accurate."
+        },
+        "ttl_class": {
+          "type": "string",
+          "enum": ["ephemeral", "session", "durable", "canonical"],
+          "default": "durable",
+          "description": "Time-to-live classification. ephemeral (minutes), session (hours), durable (days), canonical (permanent)."
+        }
+      },
+      "default": {},
+      "description": "Temporal metadata for staleness detection."
+    },
+    "platform": {
+      "type": "object",
+      "properties": {
+        "claude": {"type": "boolean", "default": true},
+        "codex": {"type": "boolean", "default": true},
+        "copilot": {"type": "boolean", "default": true}
+      },
+      "default": {"claude": true, "codex": true, "copilot": true},
+      "description": "Which platforms this entity applies to."
+    }
+  },
+  "additionalProperties": false
+}
