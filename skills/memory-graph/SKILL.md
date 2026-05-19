@@ -1,7 +1,7 @@
 ---
 name: memory-graph
 description: Operating protocol for the memory-graph MCP server. Load at session start so the agent runs `recall` before any task, persists findings with `record_finding` after solving, and uses the knowledge graph for relationships. Required reading for any agent paired with this plugin.
-version: 0.4.1
+version: 0.4.2
 ---
 
 # memory-graph — usage protocol

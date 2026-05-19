@@ -1,6 +1,6 @@
 """memory-graph MCP server — unified memory layer.
 
-High-level tool surface (v0.4.1):
+High-level tool surface (v0.4.2):
 
   Primary (use these by default):
     - recall(query, scope, ...)         — semantic search across memories+KG+wiki
@@ -455,9 +455,25 @@ def kg_influential(
 
 
 def main() -> None:
-    """Run the memory-graph MCP server over stdio transport."""
-    logger.info("Starting memory-graph MCP server v0.4.1 (unified recall + auto-edges + wiki integration + pluggable embedding providers)")
-    mcp.run(transport="stdio")
+    """Run the memory-graph MCP server over stdio transport.
+
+    Wrapped in try/except so any startup failure (workspace resolution,
+    DuckDB init, embedding provider) surfaces to the user via stderr
+    instead of dying silently with no JSON-RPC response.
+    """
+    import sys
+    try:
+        logger.info("Starting memory-graph MCP server v0.4.2 (unified recall + auto-edges + wiki integration + pluggable embedding providers)")
+        mcp.run(transport="stdio")
+    except Exception as exc:  # noqa: BLE001 — top-level catch is the point
+        sys.stderr.write(f"\n[memory-graph] FATAL startup error: {type(exc).__name__}: {exc}\n")
+        sys.stderr.write("[memory-graph] Common causes:\n")
+        sys.stderr.write("  - MEMORY_GRAPH_WORKSPACE / CLAUDE_PROJECT_DIR not set or not a directory\n")
+        sys.stderr.write("  - fastembed model download failed (offline / proxy / CDN unreachable)\n")
+        sys.stderr.write("  - DuckDB database file locked or corrupt at <workspace>/.memory-graph/\n")
+        sys.stderr.write("See https://github.com/brayanfz013/memory-graph-mcp#troubleshooting for details.\n")
+        sys.stderr.flush()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,12 @@
   "mcpServers": {
     "memory-graph": {
       "type": "stdio",
-      "command": "memory-graph",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/brayanfz013/memory-graph-mcp@v0.4.2",
+        "memory-graph"
+      ],
       "env": {
         "MEMORY_GRAPH_WORKSPACE": "${CLAUDE_PROJECT_DIR}"
       },

@@ -345,19 +345,6 @@ def _migrate_schema(conn: duckdb.DuckDBPyConnection) -> None:
         # v3 was a no-op duplicate of v2; kept for version-bookkeeping only.
         logger.info("Migrated schema to v3: noop bookkeeping")
 
-    if current_version < 5:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS embedding_meta (
-                generation  INTEGER PRIMARY KEY,
-                provider    VARCHAR NOT NULL,
-                model_name  VARCHAR NOT NULL,
-                dimensions  INTEGER NOT NULL,
-                is_active   BOOLEAN NOT NULL DEFAULT true,
-                created_at  TIMESTAMP DEFAULT current_timestamp
-            )
-        """)
-        logger.info("Migrated schema to v5: embedding_meta table added")
-
     if current_version < 4:
         dim = get_embedding_dimensions()
         conn.execute("""
@@ -399,6 +386,19 @@ def _migrate_schema(conn: duckdb.DuckDBPyConnection) -> None:
         # Backfill status NULL → 'draft' for older nodes.
         conn.execute("UPDATE kg_nodes SET status = 'draft' WHERE status IS NULL")
         logger.info("Migrated schema to v4: wiki_pages/wiki_embeddings + canonical/reuse/status backfill")
+
+    if current_version < 5:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS embedding_meta (
+                generation  INTEGER PRIMARY KEY,
+                provider    VARCHAR NOT NULL,
+                model_name  VARCHAR NOT NULL,
+                dimensions  INTEGER NOT NULL,
+                is_active   BOOLEAN NOT NULL DEFAULT true,
+                created_at  TIMESTAMP DEFAULT current_timestamp
+            )
+        """)
+        logger.info("Migrated schema to v5: embedding_meta table added")
 
     conn.execute(
         "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",

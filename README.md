@@ -30,12 +30,16 @@ Storage is **workspace-scoped DuckDB** at `<repo>/.memory-graph/memory.duckdb` �
 
 ### As a Claude Code plugin (recommended)
 
-This package ships with a `.claude-plugin/` manifest. Inside Claude Code:
+Zero-install — the plugin's `.mcp.json` invokes `uvx` to bootstrap the server straight from the GitHub release tag. **Prerequisite:** `uv` on PATH (`pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`).
+
+Inside Claude Code:
 
 ```bash
 /plugin marketplace add brayanfz013/memory-graph-mcp
-/plugin install memory-graph
+/plugin install memory-graph@memory-graph-marketplace
 ```
+
+First launch downloads + caches the wheel (≈30–60 s); subsequent launches reuse `uv`'s cache and start instantly. No `pip install` step needed.
 
 The plugin auto-wires the MCP server, ships a `memory-graph` skill with the usage protocol, and adds a `/memory-recall` slash command. See [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json).
 
@@ -112,6 +116,19 @@ wiki_get("solution.duckdb-lock-retry")
 ```
 
 See [`examples/quickstart.py`](examples/quickstart.py) for a complete walkthrough.
+
+---
+
+## Troubleshooting
+
+If the MCP server fails to start, check Claude Code's MCP stderr log. Common causes:
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `WorkspaceResolutionError` / "not a directory" | `MEMORY_GRAPH_WORKSPACE` or `CLAUDE_PROJECT_DIR` unset, or contains an unexpanded `${...}` literal | Set `MEMORY_GRAPH_WORKSPACE` explicitly in your MCP config to the absolute path of your project root |
+| Stalled for >2 minutes on first run | fastembed ONNX model download from HuggingFace (~100 MB) in progress, or blocked by proxy/firewall | Verify `https://huggingface.co` is reachable; check `~/.cache/fastembed` for partial downloads and delete it to retry |
+| `RuntimeError: fastembed failed to initialize` | Corporate proxy with TLS interception, or HuggingFace CDN unreachable | Set `HF_HUB_OFFLINE=0` and pre-download the model with `python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"` from a network with internet access |
+| `duckdb.IOException` on startup | DB file locked by another process, or corrupted from a half-write | Close other Claude Code sessions on the same workspace; if it persists, back up and delete `<workspace>/.memory-graph/memory.duckdb` |
 
 For the full usage protocol (what to recall, when to record, how to traverse the graph), see [`PROTOCOL.md`](PROTOCOL.md).
 

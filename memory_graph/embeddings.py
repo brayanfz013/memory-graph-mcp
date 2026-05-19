@@ -98,7 +98,22 @@ class _FastEmbedProvider:
         from fastembed import TextEmbedding
 
         self.model_name = settings.fastembed_model
-        self._model = TextEmbedding(self.model_name)
+        # First-run download (~100 MB for BGE-small-en) happens inside TextEmbedding().
+        # Log up front so a user staring at a stalled MCP server has a breadcrumb.
+        logger.info(
+            "fastembed: initializing model %s (first run may download ~100 MB from HuggingFace CDN, "
+            "cache at ~/.cache/fastembed; this can take 1–2 minutes)",
+            self.model_name,
+        )
+        try:
+            self._model = TextEmbedding(self.model_name)
+        except Exception as exc:  # noqa: BLE001 — surface any download/init failure clearly
+            raise RuntimeError(
+                f"fastembed failed to initialize model '{self.model_name}'. "
+                f"Common causes: offline machine, corporate proxy blocking https://huggingface.co, "
+                f"or partial download in ~/.cache/fastembed (delete the cache and retry). "
+                f"Original error: {type(exc).__name__}: {exc}"
+            ) from exc
         # Detect dimensions from a test embedding
         test = list(self._model.embed(["test"]))
         self.dimensions = len(test[0])

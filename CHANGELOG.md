@@ -4,6 +4,32 @@ All notable changes to `memory-graph-mcp` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] — 2026-05-19
+
+Zero-install plugin distribution + security & reliability hardening. The plugin now bootstraps itself via `uvx` straight from a pinned commit SHA in this repo, so end users no longer need to `pip install memory-graph-mcp` before `/plugin install`.
+
+### Changed
+
+- **`.mcp.json`**: `command` switched from `"memory-graph"` (required pre-installed binary) to `"uvx"` with `--from git+https://github.com/brayanfz013/memory-graph-mcp@<commit-sha>`. We pin a **full commit SHA** rather than a tag name because git tags are mutable — pinning the SHA makes the install reference immutable and prevents tag-takeover attacks from silently delivering new code on subsequent installs. Single-command install: `/plugin marketplace add brayanfz013/memory-graph-mcp` + `/plugin install memory-graph@memory-graph-marketplace`. Requires `uv` on PATH; first launch downloads + caches the wheel (≈30–60 s), subsequent launches use uv's cache.
+- **README**: "As a Claude Code plugin" section rewritten to reflect the new flow and call out the `uv` prerequisite up front.
+
+### Fixed (security)
+
+- **CI hardening**: added `permissions: contents: read` to [`.github/workflows/ci.yml`](.github/workflows/ci.yml) so the workflow runs with least privilege and PR runs from forks cannot escalate to write scopes on the `GITHUB_TOKEN`.
+- **Supply-chain integrity**: `.mcp.json` now references a commit SHA, not a tag. Even if a maintainer key is compromised, the install reference cannot be silently retargeted via `git push --force <tag>`.
+
+### Fixed (reliability)
+
+- **Schema migration order**: in [`memory_graph/db.py`](memory_graph/db.py) `_migrate_schema`, the `< 4` block now runs before the `< 5` block so upgrades from v0.3.x databases apply the wiki/canonical migration before the embedding-meta migration. Previously a partial failure during the v4 step could leave the DB at a half-applied state.
+- **Startup error visibility**: [`memory_graph/server.py`](memory_graph/server.py) `main()` is now wrapped in a top-level `try/except` that writes a human-readable error message to stderr and exits with code 1. Previously a `WorkspaceResolutionError` (e.g., `CLAUDE_PROJECT_DIR` unset or not a directory) caused the MCP server to die before logging anything, leaving users with an opaque "MCP server failed to start" in Claude Code.
+- **fastembed cold-start UX**: [`memory_graph/embeddings.py`](memory_graph/embeddings.py) `_FastEmbedProvider.__init__` now logs the model-name + cache directory + expected duration *before* the ONNX model download starts, and wraps the download in a `try/except` that re-raises with a clear actionable message naming common causes (offline, corporate proxy, partial cache). Previously a stalled download or proxy failure surfaced only as a generic exception with no user guidance.
+
+### Notes
+
+- The `memory-graph` CLI entry point still works for users who prefer `pip install` — point your MCP client at the binary in PATH and the plugin behavior is identical.
+- **First-run network requirement**: on first use in any workspace, the server downloads the BGE-small-en-v1.5 ONNX model (~100 MB) from HuggingFace. Requires `https://huggingface.co` reachable. Subsequent starts use the local cache at `~/.cache/fastembed` and require no network access.
+- On every release, bump the SHA reference inside `.mcp.json` so `uvx` pins to a known immutable commit.
+
 ## [0.4.1] — 2026-05-19
 
 Pluggable embedding providers + identity tracking + benchmark harness. Lets users swap between local fastembed models, local Ollama, or Google Vertex AI safely without losing stored content.
