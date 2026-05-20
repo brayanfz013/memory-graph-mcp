@@ -4,6 +4,28 @@ All notable changes to `memory-graph-mcp` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] — 2026-05-19
+
+Plugin install fix. `/plugin install` was failing schema validation against the official Claude Code plugin manifest because v0.4.2 used fields that do not exist in the spec.
+
+### Fixed (plugin install — v0.4.2 was unusable)
+
+- **`.claude-plugin/plugin.json`**: removed the non-spec `components` wrapper, `requirements` block, and `installNotes` field. The MCP server, skills, and commands are now picked up via Claude Code's default auto-discovery from `.mcp.json`, `skills/`, and `commands/` respectively (per [Plugins reference — file locations](https://code.claude.com/docs/en/plugins-reference#file-locations-reference)). Added `$schema` for editor validation.
+- **`.claude-plugin/marketplace.json`**: changed `"source": "."` to `"source": "./"` (the spec requires relative paths to start with `./`). Removed the non-spec `owner.url` field.
+
+### Why this needed a release
+
+`/plugin marketplace add` worked because the marketplace manifest is read on registration, but `/plugin install` validates the full plugin manifest before copying it into `~/.claude/plugins/cache`, and the schema mismatch caused a hard failure. Users on v0.4.2 saw the marketplace registered but no plugin installable.
+
+### How to upgrade if you already added the v0.4.2 marketplace
+
+```text
+/plugin marketplace update memory-graph-marketplace
+/plugin install memory-graph@memory-graph-marketplace
+```
+
+`marketplace update` re-fetches the manifest from this repo's HEAD; `install` then reads the new, spec-compliant `plugin.json`.
+
 ## [0.4.2] — 2026-05-19
 
 Zero-install plugin distribution + security & reliability hardening. The plugin now bootstraps itself via `uvx` straight from a pinned commit SHA in this repo, so end users no longer need to `pip install memory-graph-mcp` before `/plugin install`.

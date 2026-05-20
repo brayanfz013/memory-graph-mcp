@@ -62,8 +62,31 @@ class PluginManifestTests(unittest.TestCase):
             self.manifest = json.load(fh)
 
     def test_has_core_fields(self) -> None:
-        for field in ("name", "version", "description", "author", "license", "components"):
+        # Official Claude Code plugin manifest schema:
+        # https://code.claude.com/docs/en/plugins-reference#plugin-manifest-schema
+        # `name` is the only required field; the rest are metadata.
+        # We assert the metadata we always want present for this plugin.
+        for field in ("name", "version", "description", "author", "license"):
             self.assertIn(field, self.manifest, f"Missing field: {field}")
+
+    def test_no_unknown_top_level_fields(self) -> None:
+        # Validates against the official plugin manifest schema. Catches the
+        # v0.4.2 regression where `components`, `requirements`, and `installNotes`
+        # were used — none of those are in the spec, and `/plugin install` rejected
+        # the manifest.
+        known = {
+            "$schema", "name", "displayName", "version", "description",
+            "author", "homepage", "repository", "license", "keywords",
+            "skills", "commands", "agents", "hooks", "mcpServers",
+            "outputStyles", "lspServers", "experimental", "userConfig",
+            "channels", "dependencies",
+        }
+        unknown = set(self.manifest.keys()) - known
+        self.assertEqual(
+            unknown, set(),
+            f"plugin.json has fields not in the official schema: {sorted(unknown)}. "
+            f"See https://code.claude.com/docs/en/plugins-reference"
+        )
 
     def test_version_matches_pyproject(self) -> None:
         pyproject = (PACKAGE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -71,16 +94,19 @@ class PluginManifestTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(self.manifest["version"], match.group(1))
 
-    def test_referenced_components_exist(self) -> None:
-        components = self.manifest.get("components", {})
-        for path in components.get("mcpServers", []):
-            self.assertTrue((PACKAGE_ROOT / path).exists(), f"Missing component: {path}")
-        for path in components.get("skills", []):
+    def test_default_component_paths_exist(self) -> None:
+        # With no explicit `components` field, Claude Code auto-discovers
+        # components from these default paths. Verify each path the plugin
+        # relies on is actually present.
+        defaults = [
+            (".mcp.json", "file"),
+            ("skills/memory-graph/SKILL.md", "file"),
+            ("commands/memory-recall.md", "file"),
+        ]
+        for path, kind in defaults:
             full = PACKAGE_ROOT / path
-            self.assertTrue(full.exists() and full.is_dir(), f"Missing skill dir: {path}")
-            self.assertTrue((full / "SKILL.md").is_file(), f"Skill missing SKILL.md: {path}")
-        for path in components.get("commands", []):
-            self.assertTrue((PACKAGE_ROOT / path).is_file(), f"Missing command: {path}")
+            if kind == "file":
+                self.assertTrue(full.is_file(), f"Auto-discovered component missing: {path}")
 
 
 class MarketplaceManifestTests(unittest.TestCase):
@@ -95,6 +121,24 @@ class MarketplaceManifestTests(unittest.TestCase):
         self.assertGreaterEqual(len(plugins), 1)
         names = [p.get("name") for p in plugins]
         self.assertIn("memory-graph", names)
+
+    def test_plugin_source_starts_with_dotslash(self) -> None:
+        # Per the marketplace spec: "Must start with `./`. Resolved relative to
+        # the marketplace root." A bare "." silently fails install in v0.4.2.
+        for plugin in self.market.get("plugins", []):
+            source = plugin.get("source")
+            if isinstance(source, str):
+                self.assertTrue(
+                    source.startswith("./"),
+                    f"plugin {plugin.get('name')!r} source must start with './', got {source!r}"
+                )
+
+    def test_owner_has_no_unknown_fields(self) -> None:
+        # owner schema only supports `name` (required) and `email` (optional).
+        # Anything else (url, etc.) is invalid per the spec.
+        owner = self.market.get("owner", {})
+        unknown = set(owner.keys()) - {"name", "email"}
+        self.assertEqual(unknown, set(), f"owner has invalid fields: {sorted(unknown)}")
 
 
 class McpJsonTests(unittest.TestCase):

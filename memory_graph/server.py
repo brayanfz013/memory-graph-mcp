@@ -1,6 +1,6 @@
 """memory-graph MCP server — unified memory layer.
 
-High-level tool surface (v0.4.2):
+High-level tool surface (v0.4.3):
 
   Primary (use these by default):
     - recall(query, scope, ...)         — semantic search across memories+KG+wiki
@@ -463,7 +463,7 @@ def main() -> None:
     """
     import sys
     try:
-        logger.info("Starting memory-graph MCP server v0.4.2 (unified recall + auto-edges + wiki integration + pluggable embedding providers)")
+        logger.info("Starting memory-graph MCP server v0.4.3 (unified recall + auto-edges + wiki integration + pluggable embedding providers)")
         mcp.run(transport="stdio")
     except Exception as exc:  # noqa: BLE001 — top-level catch is the point
         sys.stderr.write(f"\n[memory-graph] FATAL startup error: {type(exc).__name__}: {exc}\n")

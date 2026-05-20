@@ -4,15 +4,14 @@
   "description": "Memory-graph: unified semantic memory for AI agents.",
   "owner": {
     "name": "brayanfz013",
-    "email": "brayanfz013@gmail.com",
-    "url": "https://github.com/brayanfz013/memory-graph-mcp"
+    "email": "brayanfz013@gmail.com"
   },
   "plugins": [
     {
       "name": "memory-graph",
-      "source": ".",
+      "source": "./",
       "description": "Per-repo DuckDB memory store with semantic recall, knowledge graph, wiki crystallization, cross-agent coordination, and pluggable embedding providers (fastembed/ollama/vertex) with benchmark + migration tooling. Bundles the usage protocol as a skill.",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "category": "memory",
       "tags": ["memory", "knowledge-graph", "mcp", "semantic-recall", "duckdb"]
     }
