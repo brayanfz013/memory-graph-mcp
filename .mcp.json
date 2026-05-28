@@ -9,7 +9,7 @@
         "memory-graph"
       ],
       "env": {
-        "MEMORY_GRAPH_WORKSPACE": "${CLAUDE_PROJECT_DIR}"
+        "MEMORY_GRAPH_WORKSPACE": "{$CLAUDE_PROJECT_DIR}"
       },
       "customInstructions": "Unified semantic memory for AI agents. MANDATORY at task start: call recall(query=<task>, top_k=5) before doing any work — it returns fused matches across memories+KG+wiki plus top_canonicals. After solving: call record_finding(finding_type, title, content, related_files, tags) to persist; this creates vector memory + KG node + auto-infers RELATED_TO edges + auto-crystallizes wiki on canonical promotion. Use wiki_get(canonical_id) to expand a recall hit into full long-form. For typed relationships (SOLVES, SUPERSEDES, DEPENDS_ON) use kg_add_edge. For multi-agent state use collective_store/get/list with TTL. For expensive idempotent calls use cache_check/cache_store. See PROTOCOL.md for the full operating manual."
     }

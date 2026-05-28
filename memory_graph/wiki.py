@@ -16,16 +16,24 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .db import get_connection, with_retry
+from .parsers import parse_code_file
 from .settings import settings
 
 logger = logging.getLogger(__name__)
+
+# Supported file extensions for code summarization
+_SUPPORTED_EXTS = {
+    ".py", ".pyi",
+    ".js", ".jsx", ".mjs", ".cjs",
+    ".ts", ".tsx", ".mts", ".cts",
+    ".cls", ".mac", ".inc", ".rtn",
+}
 
 
 def _ensure_wiki_table(conn: Any) -> None:
@@ -382,55 +390,38 @@ def _build_dir_tree(root: Path, max_depth: int = _MAX_TREE_DEPTH) -> str:
     return "\n".join(lines)
 
 
-def _extract_python_summary(path: Path) -> str | None:
-    content = _read_file_safe(path, max_chars=4000)
-    if not content:
-        return None
-
+def _format_parsed_summary(parsed: dict[str, Any]) -> str:
+    """Format a ParsedSummary dict into a markdown string for wiki body."""
     parts: list[str] = []
 
-    docstring_match = re.match(r'^(?:"""(.*?)"""|\'\'\'(.*?)\'\'\')', content, re.DOTALL)
-    if docstring_match:
-        doc = (docstring_match.group(1) or docstring_match.group(2) or "").strip()
-        if doc:
-            parts.append(f"**Module:** {doc[:300]}")
+    if parsed.get("docstrings"):
+        parts.append(f"**Module docs:** {parsed['docstrings'][0][:300]}")
 
-    classes = re.findall(r"^class\s+(\w+)", content, re.MULTILINE)
-    functions = re.findall(r"^def\s+(\w+)", content, re.MULTILINE)
-    public_classes = [c for c in classes if not c.startswith("_")]
-    public_functions = [f for f in functions if not f.startswith("_")]
+    if parsed.get("classes"):
+        parts.append(f"**Classes:** {', '.join(parsed['classes'][:15])}")
 
-    if public_classes:
-        parts.append(f"**Classes:** {', '.join(public_classes)}")
-    if public_functions:
-        parts.append(f"**Functions:** {', '.join(public_functions[:15])}")
+    if parsed.get("functions"):
+        parts.append(f"**Functions:** {', '.join(parsed['functions'][:15])}")
 
-    return "\n".join(parts) if parts else None
+    if parsed.get("methods"):
+        parts.append(f"**Methods:** {', '.join(parsed['methods'][:15])}")
 
+    if parsed.get("exports"):
+        parts.append(f"**Exports:** {', '.join(parsed['exports'][:15])}")
 
-def _extract_js_summary(path: Path) -> str | None:
-    content = _read_file_safe(path, max_chars=4000)
-    if not content:
-        return None
+    if parsed.get("interfaces"):
+        parts.append(f"**Interfaces:** {', '.join(parsed['interfaces'][:15])}")
 
-    parts: list[str] = []
+    if parsed.get("namespaces"):
+        parts.append(f"**Namespaces:** {', '.join(parsed['namespaces'][:15])}")
 
-    jsdoc_match = re.search(r"/\*\*\s*\n\s*\*\s*(.+?)(?:\n\s*\*\s*@|\s*\*/)", content, re.DOTALL)
-    if jsdoc_match:
-        doc = jsdoc_match.group(1).strip().replace("\n * ", " ")[:300]
-        parts.append(f"**Module:** {doc}")
-
-    exports = re.findall(r"export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)", content)
-    if exports:
-        parts.append(f"**Exports:** {', '.join(exports[:15])}")
-
-    return "\n".join(parts) if parts else None
+    return "\n".join(parts) if parts else "*No public symbols detected.*"
 
 
 def _summarize_directory(dir_path: Path, workspace_root: Path) -> dict[str, Any] | None:
     rel = dir_path.relative_to(workspace_root)
     readme_content = None
-    code_summaries: list[str] = []
+    code_files: list[Path] = []
 
     for doc_name in ("README.md", "readme.md", "README.rst"):
         readme_path = dir_path / doc_name
@@ -438,34 +429,31 @@ def _summarize_directory(dir_path: Path, workspace_root: Path) -> dict[str, Any]
             readme_content = _read_file_safe(readme_path)
             break
 
-    code_files = []
     try:
         code_files = [
             f for f in dir_path.iterdir()
-            if f.is_file() and f.suffix in {".py", ".js", ".ts", ".tsx"}
+            if f.is_file() and f.suffix.lower() in _SUPPORTED_EXTS
             and not f.name.startswith("_") or f.name == "__init__.py"
         ]
     except PermissionError:
         pass
 
-    for code_file in code_files[:10]:
-        if code_file.suffix == ".py":
-            summary = _extract_python_summary(code_file)
-        elif code_file.suffix in {".js", ".ts", ".tsx"}:
-            summary = _extract_js_summary(code_file)
-        else:
-            summary = None
-        if summary:
-            code_summaries.append(f"### `{code_file.name}`\n{summary}")
-
-    if not readme_content and not code_summaries:
+    # Always create a page for directories with code files, even without README
+    if not readme_content and not code_files:
         return None
 
     sections: list[str] = [f"# {rel}\n"]
     if readme_content:
         sections.append(f"## README\n{readme_content}\n")
-    if code_summaries:
-        sections.append("## Code Modules\n" + "\n\n".join(code_summaries) + "\n")
+
+    if code_files:
+        summary_lines: list[str] = []
+        for code_file in code_files[:10]:
+            parsed = parse_code_file(code_file)
+            if parsed:  # non-empty means at least some symbols were found
+                summary_lines.append(f"### `{code_file.name}`\n{_format_parsed_summary(parsed)}")
+        if summary_lines:
+            sections.append("## Code Modules\n" + "\n\n".join(summary_lines) + "\n")
 
     try:
         subdirs = [d.name for d in sorted(dir_path.iterdir())
