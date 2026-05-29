@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory-Graph MCP — Interactive Architecture Guide</title>
+<style>
+:root {
+  --bg: #0d1117; --bg2: #161b22; --bg3: #1c2333; --bg4: #252d3a;
+  --border: #30363d; --text: #e6edf3; --text2: #8b949e; --text3: #6e7681;
+  --accent: #58a6ff; --accent2: #3fb5a0; --accent3: #d2a8ff;
+  --green: #3fb950; --red: #f85149; --yellow: #d29922; --orange: #f0883e;
+  --radius: 8px; --shadow: 0 3px 12px rgba(0,0,0,.4);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Layout */
+.topbar { position: sticky; top: 0; z-index: 100; background: var(--bg2); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 20px; height: 50px; gap: 16px; }
+.topbar .logo { font-weight: 700; font-size: 16px; color: var(--accent); white-space: nowrap; }
+.topbar .logo span { color: var(--text2); font-weight: 400; }
+.topbar .search-box { flex: 1; max-width: 400px; margin: 0 auto; }
+.topbar .search-box input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: var(--radius); font-size: 14px; }
+.topbar .search-box input::placeholder { color: var(--text3); }
+.topbar .nav-links { display: flex; gap: 12px; }
+.topbar .nav-links a { font-size: 13px; color: var(--text2); }
+.topbar .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+.sidebar { position: fixed; left: 0; top: 50px; bottom: 0; width: 260px; background: var(--bg2); border-right: 1px solid var(--border); overflow-y: auto; padding: 16px 0; z-index: 90; }
+.sidebar .section { padding: 4px 16px; margin-top: 12px; }
+.sidebar .section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text3); letter-spacing: .5px; margin-bottom: 4px; }
+.sidebar a { display: block; padding: 4px 16px; font-size: 13px; color: var(--text2); border-left: 2px solid transparent; }
+.sidebar a:hover { color: var(--text); background: var(--bg3); text-decoration: none; }
+.sidebar a.active { color: var(--accent); border-left-color: var(--accent); background: var(--bg3); }
+
+.main { margin-left: 260px; padding: 32px 48px; max-width: 960px; }
+.main h1 { font-size: 28px; margin-bottom: 8px; }
+.main h2 { font-size: 22px; margin: 32px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.main h3 { font-size: 17px; margin: 24px 0 8px; color: var(--accent2); }
+.main h4 { font-size: 15px; margin: 16px 0 6px; color: var(--accent); }
+.main p { margin-bottom: 12px; color: var(--text2); }
+.main ul, .main ol { margin: 8px 0 12px 20px; color: var(--text2); }
+.main li { margin-bottom: 4px; }
+.main code { background: var(--bg4); padding: 2px 6px; border-radius: 4px; font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace; color: var(--accent3); }
+.main pre { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; overflow-x: auto; margin: 12px 0; }
+.main pre code { background: none; padding: 0; color: var(--text); }
+.main table { border-collapse: collapse; margin: 12px 0; width: 100%; }
+.main th, .main td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; font-size: 13px; }
+.main th { background: var(--bg3); color: var(--text); font-weight: 600; }
+.main td { color: var(--text2); }
+
+/* Cards */
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin: 16px 0; }
+.card .card-title { font-weight: 600; font-size: 15px; margin-bottom: 8px; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin: 16px 0; }
+.card-grid .card { text-align: center; }
+.card-grid .card .icon { font-size: 32px; margin-bottom: 8px; }
+.card-grid .card .card-title { color: var(--text); }
+
+/* Tabs */
+.tabs { margin: 16px 0; }
+.tabs .tab-headers { display: flex; border-bottom: 1px solid var(--border); gap: 0; }
+.tabs .tab-header { padding: 8px 20px; font-size: 14px; color: var(--text2); cursor: pointer; border-bottom: 2px solid transparent; transition: all .15s; }
+.tabs .tab-header:hover { color: var(--text); background: var(--bg3); }
+.tabs .tab-header.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tabs .tab-body { display: none; padding: 16px 0; }
+.tabs .tab-body.active { display: block; }
+
+/* Accordion */
+.accordion-item { border: 1px solid var(--border); border-radius: var(--radius); margin: 8px 0; overflow: hidden; }
+.accordion-header { padding: 12px 16px; background: var(--bg2); cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 500; }
+.accordion-header:hover { background: var(--bg3); }
+.accordion-header .arrow { transition: transform .2s; font-size: 12px; color: var(--text3); }
+.accordion-header.open .arrow { transform: rotate(90deg); }
+.accordion-body { display: none; padding: 16px; background: var(--bg); }
+.accordion-body.open { display: block; }
+
+/* Badge */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+.badge-blue { background: #1f6feb33; color: var(--accent); }
+.badge-green { background: #23863633; color: var(--green); }
+.badge-purple { background: #8941b633; color: var(--accent3); }
+.badge-orange { background: #bd560033; color: var(--orange); }
+.badge-red { background: #da363333; color: var(--red); }
+.badge-yellow { background: #9e6a0333; color: var(--yellow); }
+
+/* Diagram */
+.diagram { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin: 16px 0; font-family: 'SF Mono', monospace; font-size: 12px; white-space: pre; overflow-x: auto; line-height: 1.5; color: var(--text2); }
+.diagram .box { color: var(--accent); }
+.diagram .layer { color: var(--accent2); }
+.diagram .arrow { color: var(--text3); }
+
+/* Flow */
+.flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+.flow .step { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 14px; font-size: 13px; text-align: center; }
+.flow .step .label { font-weight: 600; color: var(--text); display: block; }
+.flow .step .desc { color: var(--text3); font-size: 11px; }
+.flow .arrow { color: var(--accent); font-size: 18px; }
+
+/* Highlight */
+.highlight { border-left: 3px solid var(--accent); padding-left: 12px; margin: 12px 0; }
+.highlight.warn { border-left-color: var(--yellow); }
+.highlight.error { border-left-color: var(--red); }
+.highlight.success { border-left-color: var(--green); }
+
+/* Search results */
+#search-results { position: fixed; top: 50px; left: 260px; right: 0; background: var(--bg2); border-bottom: 1px solid var(--border); max-height: 60vh; overflow-y: auto; z-index: 95; display: none; }
+#search-results .sr-item { padding: 10px 20px; border-bottom: 1px solid var(--border); cursor: pointer; }
+#search-results .sr-item:hover { background: var(--bg3); }
+#search-results .sr-item .sr-title { font-weight: 600; font-size: 14px; color: var(--text); }
+#search-results .sr-item .sr-path { font-size: 12px; color: var(--text3); }
+
+/* Section anchor */
+.section-anchor { scroll-margin-top: 60px; }
+
+/* Collapsible */
+.collapsible-toggle { color: var(--accent); cursor: pointer; font-size: 13px; }
+.collapsible-toggle::before { content: '[+] '; }
+.collapsible-toggle.open::before { content: '[-] '; }
+.collapsible-content { display: none; margin-top: 8px; }
+.collapsible-content.open { display: block; }
+
+/* Code block tabs */
+.code-tabs { margin: 16px 0; }
+.code-tabs .ct-headers { display: flex; border: 1px solid var(--border); border-bottom: none; border-radius: var(--radius) var(--radius) 0 0; overflow: hidden; }
+.code-tabs .ct-header { padding: 6px 14px; font-size: 12px; background: var(--bg3); color: var(--text3); cursor: pointer; border-right: 1px solid var(--border); }
+.code-tabs .ct-header.active { background: var(--bg); color: var(--text); }
+.code-tabs .ct-body { border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); }
+.code-tabs .ct-body pre { margin: 0; border-radius: 0 0 var(--radius) var(--radius); }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; padding: 20px; }
+  #search-results { left: 0; }
+}
+
+/* Print */
+@media print {
+  .sidebar, .topbar, #search-results { display: none !important; }
+  .main { margin-left: 0; }
+  body { background: white; color: black; }
+}
+</style>
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <div class="logo">memory-graph<span> mcp</span></div>
+  <div class="search-box">
+    <input type="text" id="searchInput" placeholder="Search docs..." autocomplete="off">
+  </div>
+  <div class="nav-links">
+    <a href="#overview">Overview</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#tools">Tools</a>
+    <a href="#kg">KG</a>
+    <a href="#embedding">Embeddings</a>
+    <a href="#protocol">Protocol</a>
+  </div>
+</div>
+
+<!-- Search Results Dropdown -->
+<div id="search-results"></div>
+
+<!-- Sidebar Navigation -->
+<div class="sidebar">
+  <div class="section">
+    <div class="section-title">Getting Started</div>
+    <a href="#overview">Overview</a>
+    <a href="#install">Install</a>
+    <a href="#quickstart">Quickstart</a>
+  </div>
+  <div class="section">
+    <div class="section-title">Core Architecture</div>
+    <a href="#architecture">Architecture Diagram</a>
+    <a href="#four-layers">Four Layers</a>
+    <a href="#storage">Storage Layer</a>
+    <a href="#lifecycle">Lifecycle</a>
+  </div>
+  <div class="section">
+    <div class="section-title">Knowledge Graph</div>
+    <a href="#kg">KG Overview</a>
+    <a href="#kg-nodes">Nodes</a>
+    <a href="#kg-edges">Edges</a>
+    <a href="#pagerank">PageRank</a>
+    <a href="#bfs">BFS Expansion</a>
+  </div>
+  <div class="section">
+    <div class="section-title">Tools</div>
+    <a href="#tools">Tool Surface</a>
+    <a href="#primary-tools">Primary</a>
+    <a href="#graph-tools">Graph</a>
+    <a href="#lifecycle-tools">Lifecycle</a>
+    <a href="#cross-agent">Cross-Agent</a>
+    <a href="#health-tools">Health</a>
+    <a href="#embedding-tools">Embedding Admin</a>
+  </div>
+  <div class="section">
+    <div class="section-title">Embeddings</div>
+    <a href="#embedding">Providers</a>
+    <a href="#embedding-swapping">Swapping Providers</a>
+    <a href="#embedding-migrate">Migration</a>
+  </div>
+  <div class="section">
+    <div class="section-title">Wiki Layer</div>
+    <a href="#wiki">Wiki Overview</a>
+    <a href="#wiki-bootstrap">Bootstrap</a>
+    <a href="#wiki-crystallize">Crystallization</a>
+  </div>
+  <div class="section">
+    <div class="section-title">Usage Protocol</div>
+    <a href="#protocol">Operating Protocol</a>
+    <a href="#findings">Finding Types</a>
+    <a href="#auto-edges">Auto-Edges</a>
+    <a href="#auto-promotion">Auto-Promotion</a>
+  </div>
+  <div class="section">
+    <div class="section-title">Internals</div>
+    <a href="#db-schema">DB Schema</a>
+    <a href="#schema-migrations">Migrations</a>
+    <a href="#concurrency">Concurrency</a>
+    <a href="#settings">Configuration</a>
+    <a href="#code-structure">Code Structure</a>
+  </div>
+</div>
+
+<!-- Main Content -->
+<div class="main">
+
+<!-- ═══════════════ OVERVIEW ═══════════════ -->
+<h2 class="section-anchor" id="overview">Overview</h2>
+<p><strong>memory-graph-mcp</strong> is a unified semantic memory system for AI agents. It provides one MCP (Model Context Protocol) server that gives Claude Code, Codex, Cursor, or any MCP client a <em>per-repo knowledge store</em> with four reinforcing layers:</p>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="icon">&#x1f4ca;</div>
+    <div class="card-title">Vector Memories</div>
+    <div style="font-size:13px;color:var(--text2)">Findings with embeddings for semantic recall of past solutions and decisions.</div>
+  </div>
+  <div class="card">
+    <div class="icon">&#x1f578;</div>
+    <div class="card-title">Knowledge Graph</div>
+    <div style="font-size:13px;color:var(--text2)">Typed nodes + edges (SOLVES, SUPERSEDES...) + PageRank to surface what matters most.</div>
+  </div>
+  <div class="card">
+    <div class="icon">&#x1f4d6;</div>
+    <div class="card-title">Wiki</div>
+    <div style="font-size:13px;color:var(--text2)">Long-form curated docs auto-generated from canonical KG nodes.</div>
+  </div>
+  <div class="card">
+    <div class="icon">&#x1f91d;</div>
+    <div class="card-title">Collective + Cache</div>
+    <div style="font-size:13px;color:var(--text2)">Cross-agent state with TTL to coordinate multi-agent work without re-running expensive tools.</div>
+  </div>
+</div>
+
+<div class="highlight success">
+  <strong>Key design principle:</strong> Storage is <strong>workspace-scoped DuckDB</strong> at <code>&lt;repo&gt;/.memory-graph/memory.duckdb</code> &mdash; no cloud, no API keys for local embeddings (uses <code>fastembed</code> with BGE models).
+</div>
+
+<h3 class="section-anchor" id="install">Install</h3>
+
+<div class="tabs">
+  <div class="tab-headers">
+    <div class="tab-header active" data-tab="install-claude">Claude Code Plugin</div>
+    <div class="tab-header" data-tab="install-pip">pip / uv</div>
+    <div class="tab-header" data-tab="install-source">From Source</div>
+  </div>
+  <div class="tab-body active" id="install-claude">
+    <p>Zero-install via <code>uvx</code>. Prerequisite: <code>uv</code> on PATH.</p>
+    <pre><code># Inside Claude Code:
+/plugin marketplace add brayanfz013/memory-graph-mcp
+/plugin install memory-graph@memory-graph-marketplace
+
+# First launch downloads + caches the wheel (~30-60s); subsequent launches are instant.</code></pre>
+  </div>
+  <div class="tab-body" id="install-pip">
+    <pre><code># With uv (fast)
+uv pip install memory-graph-mcp
+
+# Or with pip
+pip install memory-graph-mcp
+
+# Optional: Vertex AI embeddings instead of local fastembed
+uv pip install "memory-graph-mcp[vertex]"</code></pre>
+  </div>
+  <div class="tab-body" id="install-source">
+    <pre><code>git clone https://github.com/brayanfz013/memory-graph-mcp.git
+cd memory-graph-mcp
+uv pip install -e ".[dev]"
+pytest        # Run tests
+ruff check    # Run lint</code></pre>
+  </div>
+</div>
+
+<h3 class="section-anchor" id="quickstart">Quickstart</h3>
+<p>Three calls cover 90% of use cases:</p>
+
+<div class="code-tabs">
+  <div class="ct-headers">
+    <div class="ct-header active">Python (MCP Client)</div>
+    <div class="ct-header">JSON-RPC</div>
+  </div>
+  <div class="ct-body">
+    <pre><code># 1. Before working -- check if this problem was solved before
+recall(query="duckdb concurrent write lock", top_k=5)
+
+# 2. After solving -- persist the finding
+#    (creates vector memory + KG node + auto-infers edges + wiki crystallize)
+record_finding(
+    finding_type="solution",
+    title="DuckDB lock retry with exponential backoff",
+    content="Wrap writes in retry decorator (3 attempts, 0.2s base delay)",
+    related_files=["memory_graph/db.py"],
+    tags=["duckdb", "concurrency"],
+)
+
+# 3. Later -- fetch the full curated wiki page
+wiki_get("solution.duckdb-lock-retry")</code></pre>
+  </div>
+  <div class="ct-body" style="display:none">
+    <pre><code">// JSON-RPC example (same tools, just wrapped in MCP transport)
+// Tool call:
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "tool": "recall",
+    "arguments": { "query": "duckdb concurrent write lock", "top_k": 5 }
+  }
+}</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════ ARCHITECTURE ═══════════════ -->
+<h2 class="section-anchor" id="architecture">Architecture</h2>
+
+<div class="diagram">
+<span class="box">MCP Client</span> (Claude Code / Codex / Cursor / Claude API)
+   <span class="arrow">│</span>
+   <span class="arrow">stdio (JSON-RPC)</span>
+   <span class="arrow">│</span>
+<span class="box">server.py</span> <span style="color:var(--text3)">← FastMCP tool surface (~20 tools)</span>
+   <span class="arrow">├──────┬──────┤</span>
+   <span class="arrow">│      │      │</span>
+<span class="layer">unified.py</span>  <span class="layer">intelligence.py</span>  <span style="color:var(--text3)"></span>
+<span style="color:var(--text3)">(recall)</span>          <span style="color:var(--text3)">(record_finding pipeline)</span>
+   <span class="arrow">│                │</span>
+   <span class="arrow">├────┬───────────┬──────────┬──────────┤</span>
+   <span class="arrow">│    │           │          │          │</span>
+<span style="color:var(--orange)">vector_store</span>  <span style="color:var(--accent)">knowledge_graph</span>  <span style="color:var(--accent2)">wiki</span>  <span style="color:var(--accent3)">collective</span>  <span style="color:var(--yellow)">tool_cache</span>
+<span style="color:var(--text3)">(embeddings)</span>  <span style="color:var(--text3)">(nodes+edges+PR)</span> <span style="color:var(--text3)">(crystallize)</span>
+   <span class="arrow">│    │           │          │          │</span>
+   <span class="arrow">└────┴───────────┴──────────┴──────────┘</span>
+   <span class="arrow">│</span>
+   <span class="arrow">▼</span>
+<span class="box">DuckDB + VSS</span> <span style="color:var(--text3)">(single file per workspace)</span>
+<span style="color:var(--text3)"><workspace>/.memory-graph/memory.duckdb</span></div>
+
+<h3 class="section-anchor" id="four-layers">The Four Layers</h3>
+
+<table>
+  <tr><th>Layer</th><th>What it stores</th><th>How it works</th><th>Key tools</th></tr>
+  <tr>
+    <td><span class="badge badge-blue">Vector</span></td>
+    <td>Text memories with embeddings</td>
+    <td>HNSW index on cosine similarity in DuckDB</td>
+    <td><code>recall</code>, <code>memory_store</code></td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-green">KG</span></td>
+    <td>Typed nodes + edges, PageRank scores</td>
+    <td>Iterative PageRank, BFS expansion</td>
+    <td><code>kg_add_node</code>, <code>kg_add_edge</code>, <code>kg_neighbors</code></td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-purple">Wiki</span></td>
+    <td>Long-form docs auto-crystallized from KG</td>
+    <td>Links to canonical KG nodes, ILIKE fallback</td>
+    <td><code>wiki_get</code>, <code>wiki_crystallize</code></td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-orange">Collective</span></td>
+    <td>Cross-agent state with TTL</td>
+    <td>LRU eviction, 8 TTL types</td>
+    <td><code>collective_store</code>, <code>collective_get</code></td>
+  </tr>
+</table>
+
+<h3 class="section-anchor" id="storage">Storage Layer</h3>
+<p>Everything lives in a single <strong>DuckDB</strong> file with the <strong>VSS (Vector Similarity Search)</strong> extension for HNSW-based vector search using cosine similarity.</p>
+
+<div class="highlight">
+  <strong>DuckDB advantages:</strong> Single-file database, WAL-based concurrency (no lock conflicts under normal use), built-in HNSW index, no external dependencies. The VSS extension provides native vector operations like <code>array_cosine_similarity()</code>.
+</div>
+
+<h3 class="section-anchor" id="lifecycle">Node Lifecycle</h3>
+
+<div class="flow">
+  <div class="step"><span class="label">Draft</span><span class="desc">New finding</span></div>
+  <div class="arrow">→</div>
+  <div class="step"><span class="label">Canonical</span><span class="desc">reuse_count ≥ 3</span></div>
+  <div class="arrow">→</div>
+  <div class="step"><span class="label">Superseded</span><span class="desc">Old knowledge</span></div>
+</div>
+
+<p>A node auto-promotes from <code>draft</code> to <code>canonical</code> when <code>reuse_count &ge; 3</code> (i.e., it's been referenced in 3+ recalls). Canonical promotion triggers automatic wiki crystallization.</p>
+
+<!-- ═══════════════ KNOWLEDGE GRAPH ═══════════════ -->
+<h2 class="section-anchor" id="kg">Knowledge Graph</h2>
+
+<h3 class="section-anchor" id="kg-nodes">Nodes</h3>
+<p>Each KG node has:</p>
+
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>node_id</code></td><td>VARCHAR</td><td>Unique ID: <code>&lt;type&gt;.&lt;uuid&gt;</code></td></tr>
+  <tr><td><code>node_type</code></td><td>VARCHAR</td><td><span class="badge badge-blue">Decision</span> <span class="badge badge-green">Solution</span> <span class="badge badge-red">Problem</span> <span class="badge badge-yellow">Tool</span> <span class="badge badge-purple">Pattern</span> <span class="badge badge-orange">Entity</span></td></tr>
+  <tr><td><code>label</code></td><td>VARCHAR</td><td>Human-readable title</td></tr>
+  <tr><td><code>canonical_id</code></td><td>VARCHAR</td><td>Stable slug: <code>&lt;type&gt;.&lt;slugified-label&gt;</code> (dedup key)</td></tr>
+  <tr><td><code>properties_json</code></td><td>VARCHAR</td><td>Arbitrary JSON (content, files, tags, memory_id)</td></tr>
+  <tr><td><code>status</code></td><td>VARCHAR</td><td><code>draft</code> | <code>canonical</code> | <code>superseded</code></td></tr>
+  <tr><td><code>pagerank_score</code></td><td>DOUBLE</td><td>Computed importance (0-1)</td></tr>
+  <tr><td><code>reuse_count</code></td><td>INTEGER</td><td>How many times this node was accessed (auto-incremented on recall)</td></tr>
+  <tr><td><code>tldr_32 / brief_96 / summary_256</code></td><td>VARCHAR</td><td>Pre-computed summaries at 3 length tiers</td></tr>
+  <tr><td><code>confidence</code></td><td>DOUBLE</td><td>Auto-computed from reuse count and edge connections</td></tr>
+  <tr><td><code>wiki_page</code></td><td>VARCHAR</td><td>FK to wiki_pages.page_id (if crystallized)</td></tr>
+</table>
+
+<h3 class="section-anchor" id="kg-edges">Edges</h3>
+
+<table>
+  <tr><th>Relation</th><th>Direction</th><th>Meaning</th></tr>
+  <tr><td><span class="badge badge-green">SOLVES</span></td><td>Decision → Problem</td><td>A solution to a problem</td></tr>
+  <tr><td><span class="badge badge-red">CAUSED_BY</span></td><td>Problem → Problem</td><td>Root cause chain</td></tr>
+  <tr><td><span class="badge badge-blue">DEPENDS_ON</span></td><td>Task → Task</td><td>Precondition</td></tr>
+  <tr><td><span class="badge badge-purple">RELATED_TO</span></td><td>Any → Any</td><td>Auto-inferred semantic similarity</td></tr>
+  <tr><td><span class="badge badge-yellow">USES_TOOL</span></td><td>Solution → Tool</td><td>Technology used</td></tr>
+  <tr><td><span class="badge badge-orange">SUPERSEDES</span></td><td>New → Old</td><td>Replacement</td></tr>
+</table>
+
+<h3 class="section-anchor" id="pagerank">PageRank</h3>
+<p>PageRank is computed iteratively over the KG edges. It scores nodes by importance based on the graph structure:</p>
+
+<pre><code>For each iteration:
+  new_score[target] = (1-damping)/N + damping * sum(
+    source_score[source] * weight(edge) / out_weight[source]
+    for all sources pointing to target
+  )
+
+Convergence: stop when max diff &lt; 1e-6 (typically 10-30 iterations)</code></pre>
+
+<p>The damping factor defaults to <code>0.85</code> (standard value). PageRank is re-computed after <code>memory_consolidate(dry_run=False)</code>.</p>
+
+<h3 class="section-anchor" id="bfs">BFS Expansion</h3>
+<p>When <code>recall(hops=N)</code> is called, seed nodes found by semantic search are expanded N hops via breadth-first search to surface related context:</p>
+
+<pre><code>hops=0: Only semantic seed nodes
+hops=1: Seeds + their immediate neighbors (edges)
+hops=2: Seeds + 1-hop + 2-hop neighbors
+...</code></pre>
+
+<!-- ═══════════════ TOOLS ═══════════════ -->
+<h2 class="section-anchor" id="tools">Tool Surface</h2>
+
+<h3 class="section-anchor" id="primary-tools">Primary Tools (use these by default)</h3>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)">
+    <span><code>recall(query, scope, top_k, min_score, node_type, hops)</code></span>
+    <span class="arrow">&#9654;</span>
+  </div>
+  <div class="accordion-body">
+    <p>Unified semantic search across all three backends. This replaces the old trio of <code>memory_recall</code> / <code>kg_query</code> / <code>wiki_query</code>.</p>
+    <h4>Parameters</h4>
+    <ul>
+      <li><code>query</code>: Natural language search string</li>
+      <li><code>scope</code>: <code>memories</code> | <code>kg</code> | <code>wiki</code> | <code>all</code> (default)</li>
+      <li><code>top_k</code>: Max results per scope</li>
+      <li><code>min_score</code>: Cosine similarity floor (0-1), default 0.45</li>
+      <li><code>node_type</code>: Optional KG filter (Decision, Solution, etc.)</li>
+      <li><code>hops</code>: BFS expansion from KG seed nodes (0 = disabled)</li>
+    </ul>
+    <h4>Return shape</h4>
+    <pre><code>{
+  "query": "...",
+  "scope": "all",
+  "memories": [{id, type, content, score, metadata, ...}],
+  "kg": {
+    "nodes": [{node_id, node_type, label, semantic_score, pagerank_score, ...}],
+    "edges": [{from_id, to_id, rel_type, weight}],
+    "seed_count": 5,
+    "expanded_count": 3
+  },
+  "wiki": [{page_id, canonical_id, title, snippet, score, tags}],
+  "top_canonicals": ["solution.duckdb-lock-retry", ...],
+  "search_mode": "semantic"
+}</code></pre>
+    <h4>How it works internally</h4>
+    <ol>
+      <li>Embeds the query vector via the configured embedding provider</li>
+      <li>For <code>memories</code>: HNSW nearest neighbor search over <code>memory_embeddings</code> with cosine similarity</li>
+      <li>For <code>kg</code>: Joins memory embeddings → memories → kg_nodes (via properties_json memory_id), then falls back to ILIKE on label/properties if embeddings yield insufficient results. Increments <code>reuse_count</code> on hits. Expands via BFS.</li>
+      <li>For <code>wiki</code>: HNSW search over <code>wiki_embeddings</code> with ILIKE fallback</li>
+      <li>Fuses results into <code>top_canonicals</code> — the most relevant canonical_ids across all scopes (feed to <code>wiki_get</code>)</li>
+    </ol>
+  </div>
+</div>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)">
+    <span><code>record_finding(finding_type, title, content, related_files, tags, source_agent)</code></span>
+    <span class="arrow">&#9654;</span>
+  </div>
+  <div class="accordion-body">
+    <p>The main write operation. Persists a finding through a 5-step pipeline:</p>
+    <div class="flow">
+      <div class="step"><span class="label">1. memory_store</span><span class="desc">Embed + store</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><span class="label">2. kg_add_node</span><span class="desc">Create/upsert node</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><span class="label">3. Auto-edges</span><span class="desc">RELATED_TO to 3 similar nodes</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><span class="label">4. Auto-promote</span><span class="desc">draft → canonical</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><span class="label">5. Wiki crystallize</span><span class="desc">Auto-generate wiki page</span></div>
+    </div>
+    <h4>finding_type → node_type mapping</h4>
+    <table>
+      <tr><th>finding_type</th><th>→ node_type</th></tr>
+      <tr><td><code>solution</code></td><td><code>Solution</code></td></tr>
+      <tr><td><code>decision</code></td><td><code>Decision</code></td></tr>
+      <tr><td><code>insight</code></td><td><code>Pattern</code></td></tr>
+      <tr><td><code>problem</code></td><td><code>Problem</code></td></tr>
+      <tr><td><code>pattern</code></td><td><code>Pattern</code></td></tr>
+      <tr><td><code>context</code></td><td><code>Entity</code></td></tr>
+    </table>
+    <h4>Auto-edge inference</h4>
+    <p>After creating the new node, it embeds <code>{title}\n{content}</code> and searches for the top-3 semantically similar existing KG nodes (via memory embedding similarity). Creates <code>RELATED_TO</code> edges only if score &ge; 0.62 and no duplicate exists.</p>
+    <h4>Auto-promotion</h4>
+    <p>If the node's <code>reuse_count</code> reaches <strong>3</strong>, it auto-promotes from <code>draft</code> to <code>canonical</code>. The <code>reuse_count</code> is incremented every time the node appears in a <code>recall</code> result.</p>
+  </div>
+</div>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)">
+    <span><code>wiki_get(canonical_id_or_title)</code></span>
+    <span class="arrow">&#9654;</span>
+  </div>
+  <div class="accordion-body">
+    <p>Fetch a full wiki page in its entirety. Lookup priority: (1) by stable <code>canonical_id</code> slug, (2) by exact title match (case-insensitive). Returns the complete body plus tags, author, timestamps, and linked KG node.</p>
+  </div>
+</div>
+
+<h3 class="section-anchor" id="graph-tools">Graph Navigation Tools</h3>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)"><span><code>kg_neighbors(node_id, direction, rel_type)</code></span><span class="arrow">&#9654;</span></div>
+  <div class="accordion-body"><p>Get immediate neighbors of a KG node. Filter by direction (<code>outgoing</code>/<code>incoming</code>/<code>both</code>) and relation type. Returns sorted by PageRank.</p></div>
+</div>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)"><span><code>kg_path(from_id, to_id, max_depth)</code></span><span class="arrow">&#9654;</span></div>
+  <div class="accordion-body"><p>Find shortest path between two KG nodes via BFS. Returns the node path, edge list, and path length. Undirected traversal.</p></div>
+</div>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)"><span><code>kg_resolve(canonical_id)</code></span><span class="arrow">&#9654;</span></div>
+  <div class="accordion-body"><p>Look up a node by its stable canonical_id slug (e.g., <code>solution.duckdb-lock-retry</code>). Returns full node details.</p></div>
+</div>
+
+<h3 class="section-anchor" id="lifecycle-tools">Lifecycle / Advanced Write Tools</h3>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)"><span><code>kg_promote(node_id, status)</code></span><span class="arrow">&#9654;</span></div>
+  <div class="accordion-body"><p>Manually transition a node: <code>draft</code> → <code>canonical</code> → <code>superseded</code>. Canonical promotion triggers wiki crystallization on the next <code>record_finding</code> call (or run <code>wiki_bootstrap</code>).</p></div>
+</div>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)"><span><code>kg_add_edge(from_id, to_id, rel_type, weight)</code></span><span class="arrow">&#9654;</span></div>
+  <div class="accordion-body"><p>Manual typed edge. Valid relations: <code>SOLVES</code>, <code>CAUSED_BY</code>, <code>DEPENDS_ON</code>, <code>RELATED_TO</code>, <code>USES_TOOL</code>, <code>SUPERSEDES</code>. <code>record_finding</code> auto-infers <code>RELATED_TO</code> edges; use this for typed edges the system can't infer.</p></div>
+</div>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)"><span><code>wiki_ingest(title, body, canonical_id, tags, author)</code></span><span class="arrow">&#9654;</span></div>
+  <div class="accordion-body"><p>Manually author a wiki page. Auto-embedded for semantic recall. Most cases should let <code>record_finding</code> crystallize wikis automatically; use this for long-form, hand-written documentation.</p></div>
+</div>
+
+<h3 class="section-anchor" id="cross-agent">Cross-Agent State Tools</h3>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)"><span><code>collective_store(type, key, value, scope)</code></span><span class="arrow">&#9654;</span></div>
+  <div class="accordion-body">
+    <p>Share values across agents with type-based TTL.</p>
+    <h4>TTL types</h4>
+    <table>
+      <tr><th>Type</th><th>TTL</th><th>Use case</th></tr>
+      <tr><td><code>knowledge</code></td><td>Permanent</td><td>Long-term facts</td></tr>
+      <tr><td><code>result</code></td><td>Permanent</td><td>Expensive computation results</td></tr>
+      <tr><td><code>consensus</code></td><td>Permanent</td><td>Agreed-upon decisions</td></tr>
+      <tr><td><code>system</code></td><td>Permanent</td><td>System state</td></tr>
+      <tr><td><code>error</code></td><td>24 hours</td><td>Error patterns</td></tr>
+      <tr><td><code>context</code></td><td>1 hour</td><td>Session context</td></tr>
+      <tr><td><code>metric</code></td><td>1 hour</td><td>Runtime metrics</td></tr>
+      <tr><td><code>task</code></td><td>30 minutes</td><td>Task assignments</td></tr>
+    </table>
+    <h4>Scopes</h4>
+    <p><code>global</code> | <code>project</code> | <code>agent</code> — controls visibility across agent instances.</p>
+    <p>LRU eviction when entry count exceeds <code>MEMORY_GRAPH_MAX_ENTRIES</code> (default 10,000). Permanent types are never evicted.</p>
+  </div>
+</div>
+
+<div class="accordion-item">
+  <div class="accordion-header" onclick="toggleAccordion(this)"><span><code>cache_check(tool_name, args_hash)</code> / <code>cache_store(tool_name, args_hash, result, ttl_seconds)</code></span><span class="arrow">&#9654;</span></div>
+  <div class="accordion-body"><p>Memoize expensive tool calls. <code>cache_check</code> returns cached result if available; <code>cache_store</code> saves a result with TTL (default 3600s). Useful for avoiding re-running expensive external tool calls.</p></div>
+</div>
+
+<h3 class="section-anchor" id="health-tools">Health / Admin Tools</h3>
+
+<table>
+  <tr><th>Tool</th><th>Description</th></tr>
+  <tr><td><code>memory_report()</code></td><td>Counts, memory types, top influential nodes, expired entries, wiki lint</td></tr>
+  <tr><td><code>memory_consolidate(dry_run)</code></td><td>Remove expired entries + orphaned data + recompute PageRank (default preview only)</td></tr>
+  <tr><td><code>memory_stats()</code></td><td>Quick row counts for all tables</td></tr>
+  <tr><td><code>wiki_bootstrap(force, max_dirs)</code></td><td>Seed wiki from workspace structure + crystallize canonical KG nodes</td></tr>
+</table>
+
+<h3 class="section-anchor" id="embedding-tools">Embedding Provider Administration</h3>
+
+<table>
+  <tr><th>Tool</th><th>Description</th></tr>
+  <tr><td><code>embedding_status()</code></td><td>Active vs DB-stored provider + mismatch flag + PROVIDER_REGISTRY</td></tr>
+  <tr><td><code>embedding_migrate(target_provider, target_model, dry_run)</code></td><td>Re-embed everything under a new provider/model (dry_run=first)</td></tr>
+  <tr><td><code>embedding_benchmark(providers, eval_set_path, top_k)</code></td><td>Score providers on Recall@1/5, MRR, latency (isolated temp workspace)</td></tr>
+</table>
+
+<!-- ═══════════════ EMBEDDINGS ═══════════════ -->
+<h2 class="section-anchor" id="embedding">Embedding Providers</h2>
+
+<p>Three pluggable providers, unified interface (<code>embed_texts</code>, <code>embed_query</code>, <code>dimensions</code>):</p>
+
+<table>
+  <tr><th>Provider</th><th>How it works</th><th>Requires</th><th>Default model</th></tr>
+  <tr>
+    <td><span class="badge badge-green">fastembed</span></td>
+    <td>Local ONNX model via fastembed (no API key)</td>
+    <td>Internet for first download (~100 MB from HuggingFace)</td>
+    <td><code>BAAI/bge-small-en-v1.5</code> (384-dim, EN)</td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-blue">ollama</span></td>
+    <td>Local HTTP API (localhost:11434)</td>
+    <td><code>ollama serve</code> running + <code>ollama pull &lt;model&gt;</code></td>
+    <td><code>nomic-embed-text</code> (768-dim)</td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-purple">vertex</span></td>
+    <td>Google Cloud Vertex AI</td>
+    <td><code>GOOGLE_APPLICATION_CREDENTIALS</code> + project ID</td>
+    <td><code>text-embedding-005</code> (768-dim)</td>
+  </tr>
+</table>
+
+<h3 class="section-anchor" id="embedding-swapping">Swapping Providers</h3>
+
+<div class="flow">
+  <div class="step"><span class="label">1. embedding_status()</span></div>
+  <div class="arrow">→</div>
+  <div class="step"><span class="label">2. embedding_benchmark()</span></div>
+  <div class="arrow">→</div>
+  <div class="step"><span class="label">3. embedding_migrate(dry_run=True)</span></div>
+  <div class="arrow">→</div>
+  <div class="step"><span class="label">4. embedding_migrate(dry_run=False)</span></div>
+</div>
+
+<p>The key insight: <strong>source content is never touched</strong> during migration. Only the vectors are recreated with the new model's dimensions. The <code>embedding_meta</code> table tracks which provider/model/dimensions were used for each "generation", so mismatches on startup are detectable and auditable.</p>
+
+<h3 class="section-anchor" id="embedding-migrate">Migration Details</h3>
+<p><code>embedding_migrate</code> is batched (default 64 texts per batch) and runs as a plan-then-apply workflow:</p>
+
+<pre><code># Step 1: Plan (safe, no rewrite)
+embedding_migrate(target_provider="fastembed", target_model="BAAI/bge-base-en-v1.5", dry_run=True)
+# Returns: plan, estimated work, source counts
+
+# Step 2: Apply
+embedding_migrate(target_provider="fastembed", target_model="BAAI/bge-base-en-v1.5", dry_run=False)
+# Re-embeds all memory + wiki page vectors under the new model</code></pre>
+
+<!-- ═══════════════ WIKI ═══════════════ -->
+<h2 class="section-anchor" id="wiki">Wiki Layer</h2>
+<p>The wiki stores <strong>human-refined knowledge</strong> that outlives ephemeral memory. Each wiki page is linked to a canonical KG node and provides long-form, authoritative documentation.</p>
+
+<h3 class="section-anchor" id="wiki-crystallize">Crystallization</h3>
+<p>When a KG node becomes <code>canonical</code>, it auto-crystallizes into a wiki page. The crystallization extracts:</p>
+<ul>
+  <li>Title from node label</li>
+  <li>TL;DR from <code>tldr_32</code></li>
+  <li>Summary from <code>brief_96</code> / <code>summary_256</code></li>
+  <li>Full content from <code>properties_json.content</code></li>
+  <li>Related files from <code>properties_json.files</code></li>
+  <li>Tags from <code>properties_json.tags</code></li>
+</ul>
+
+<h3 class="section-anchor" id="wiki-bootstrap">Wiki Bootstrap</h3>
+<p><code>wiki_bootstrap()</code> auto-populates the wiki by scanning the workspace structure in 4 phases:</p>
+
+<div class="flow">
+  <div class="step"><span class="label">1. Workspace overview</span><span class="desc">Dir tree + READMEs</span></div>
+  <div class="arrow">→</div>
+  <div class="step"><span class="label">2. Per-directory pages</span><span class="desc">README + code summaries</span></div>
+  <div class="arrow">→</div>
+  <div class="step"><span class="label">3. Config files page</span><span class="desc">pyproject.toml, etc.</span></div>
+  <div class="arrow">→</div>
+  <div class="step"><span class="label">4. Crystallize canonicals</span><span class="desc">KG nodes → wiki pages</span></div>
+</div>
+
+<p>For Python files, it extracts docstrings, public classes, and public functions. For JS/TS files, it extracts JSDoc comments and exports. Directory pages include the directory tree structure, README content, and code summaries.</p>
+
+<!-- ═══════════════ PROTOCOL ═══════════════ -->
+<h2 class="section-anchor" id="protocol">Operating Protocol</h2>
+<p>The standard workflow for any agent task:</p>
+
+<div class="flow">
+  <div class="step"><span class="label">BEFORE work</span><span class="desc">recall(query, top_k=5)</span></div>
+  <div class="arrow">→</div>
+  <div class="step"><span class="label">Work</span><span class="desc">Read files, implement, test</span></div>
+  <div class="arrow">→</div>
+  <div class="step"><span class="label">AFTER work</span><span class="desc">record_finding(...)</span></div>
+</div>
+
+<h3 class="section-anchor" id="findings">Finding Types</h3>
+
+<table>
+  <tr><th>Type</th><th>When to use</th><th>Example</th></tr>
+  <tr><td><span class="badge badge-green">solution</span></td><td>A fix or implementation pattern</td><td>"DuckDB lock retry with backoff"</td></tr>
+  <tr><td><span class="badge badge-blue">decision</span></td><td>An architectural or design choice</td><td>"Chose DuckDB over SQLite for WAL"</td></tr>
+  <tr><td><span class="badge badge-purple">insight</span></td><td>A non-obvious observation</td><td>"HNSW rebuild every 50 inserts"</td></tr>
+  <tr><td><span class="badge badge-red">problem</span></td><td>A bug or issue</td><td>"Embedding provider mismatch on swap"</td></tr>
+  <tr><td><span class="badge badge-orange">pattern</span></td><td>A recurring pattern</td><td>"ILIKE fallback for semantic search"</td></tr>
+  <tr><td><span class="badge badge-yellow">context</span></td><td>Project context or setup</td><td>"Workspace-scoped per-repo memory"</td></tr>
+</table>
+
+<h3 class="section-anchor" id="auto-edges">Auto-Edges Deep Dive</h3>
+<p>When <code>record_finding</code> is called, it automatically infers up to 3 <code>RELATED_TO</code> edges by:</p>
+<ol>
+  <li>Embedding <code>{title}\n{content}</code> of the new finding</li>
+  <li>Searching for top-3k semantically similar existing KG nodes (via their linked memory embeddings)</li>
+  <li>Filtering by score threshold (≥ 0.62)</li>
+  <li>Deduplicating (skips if <code>RELATED_TO</code> edge already exists)</li>
+  <li>Limiting to 3 edges total</li>
+</ol>
+
+<h3 class="section-anchor" id="auto-promotion">Auto-Promotion Deep Dive</h3>
+<p>Each time a KG node appears in a <code>recall</code> result, its <code>reuse_count</code> is incremented. When <code>reuse_count</code> reaches <strong>3</strong>, the node auto-promotes from <code>draft</code> to <code>canonical</code>. This means a piece of knowledge is considered "canonical" once it has been recalled 3 times — indicating it's frequently relevant and valuable.</p>
+
+<!-- ═══════════════ INTERNALS ═══════════════ -->
+<h2 class="section-anchor" id="db-schema">Database Schema</h2>
+
+<p>The DuckDB schema (v5) with all tables:</p>
+
+<pre><code>memories          — Text memories with type, metadata, TTL
+memory_embeddings — Vector embeddings (HNSW index, cosine)
+kg_nodes          — Knowledge graph nodes (lifecycle, summaries, PR scores)
+kg_edges          — Directed, typed edges (from_id, to_id, rel_type, weight)
+collective_memory — Cross-agent shared state (key, scope, type, value, TTL)
+tool_cache        — Cached tool call results (tool_name, args_hash, result, TTL)
+wiki_pages        — Crystallized wiki pages (body, tags, author, status)
+wiki_embeddings   — Wiki page vector embeddings (HNSW index, cosine)
+embedding_meta    — Provider identity tracking (generation, provider, model, dim, active)
+schema_version    — Schema migration tracking (current version: 5)</code></pre>
+
+<h3 class="section-anchor" id="schema-migrations">Schema Migrations</h3>
+<p>Additive-only migrations (no breaking changes):</p>
+
+<table>
+  <tr><th>Version</th><th>Changes</th></tr>
+  <tr><td>v1</td><td>Initial: memories, memory_embeddings, kg_nodes, kg_edges, collective_memory, tool_cache</td></tr>
+  <tr><td>v2</td><td>Added to kg_nodes: canonical_id, status, tldr_32, brief_96, summary_256, wiki_page, confidence, reuse_count, last_validated_at</td></tr>
+  <tr><td>v3</td><td>No-op bookkeeping</td></tr>
+  <tr><td>v4</td><td>Added wiki_pages + wiki_embeddings tables; backfilled canonical_id, reuse_count, confidence, status for existing nodes</td></tr>
+  <tr><td>v5</td><td>Added embedding_meta table for provider identity tracking</td></tr>
+</table>
+
+<h3 class="section-anchor" id="concurrency">Concurrency</h3>
+
+<div class="highlight">
+  <strong>DuckDB WAL concurrency:</strong> DuckDB uses Write-Ahead Logging for concurrent access. Multiple processes can read/write simultaneously without conflicts under normal conditions.
+</div>
+
+<p>Additional protections:</p>
+<ul>
+  <li><code>@with_retry</code> decorator: All database operations are decorated with exponential backoff retry (3 attempts, 0.2s base delay, 2s max) for transient lock errors</li>
+  <li>Single connection per operation: <code>get_connection()</code> opens and closes a connection per call</li>
+  <li>HNSW index rebuild: Every 50 inserts, the HNSW index is rebuilt (not per-insert, to avoid overhead)</li>
+  <li>Singleton VSS extension: Installed once per process (<code>_vss_installed</code> flag)</li>
+  <li>Singleton schema init: Run once per process (<code>_schema_ready</code> flag)</li>
+</ul>
+
+<h3 class="section-anchor" id="settings">Configuration</h3>
+
+<p>All via environment variables (or <code>.env</code> file):</p>
+
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>MEMORY_GRAPH_WORKSPACE</code></td><td>auto-detected</td><td>Project root where DuckDB lives</td></tr>
+  <tr><td><code>MEMORY_GRAPH_DB_PATH</code></td><td><code>&lt;ws&gt;/.memory-graph/memory.duckdb</code></td><td>Override DB location</td></tr>
+  <tr><td><code>MEMORY_GRAPH_EMBEDDING_PROVIDER</code></td><td><code>fastembed</code></td><td>fastembed | ollama | vertex</td></tr>
+  <tr><td><code>MEMORY_GRAPH_FASTEMBED_MODEL</code></td><td><code>BAAI/bge-small-en-v1.5</code></td><td>fastembed model name</td></tr>
+  <tr><td><code>MEMORY_GRAPH_OLLAMA_BASE_URL</code></td><td><code>http://localhost:11434</code></td><td>Ollama HTTP endpoint</td></tr>
+  <tr><td><code>MEMORY_GRAPH_OLLAMA_MODEL</code></td><td><code>nomic-embed-text</code></td><td>Ollama model (must be pulled)</td></tr>
+  <tr><td><code>MEMORY_GRAPH_GOOGLE_PROJECT_ID</code></td><td>—</td><td>Required for vertex provider</td></tr>
+  <tr><td><code>MEMORY_GRAPH_MAX_ENTRIES</code></td><td>10000</td><td>Collective memory LRU cap</td></tr>
+  <tr><td><code>MEMORY_GRAPH_PAGERANK_DAMPING</code></td><td>0.85</td><td>PageRank damping factor</td></tr>
+</table>
+
+<p>Workspace auto-detection priority: <code>MEMORY_GRAPH_WORKSPACE</code> → <code>CLAUDE_PROJECT_DIR</code> → <code>CODEX_WORKSPACE_DIR</code> → <code>PWD</code>. Validation checks for project markers (.git, .vscode, CLAUDE.md, etc.).</p>
+
+<h3 class="section-anchor" id="code-structure">Code Structure</h3>
+
+<pre><code>memory_graph/
+  __init__.py           # Package marker
+  server.py             # ★ FastMCP tool surface — all ~20 tools
+  unified.py            # recall() — fused search across all backends
+  intelligence.py       # record_finding(), memory_consolidate(), kg_neighbors, kg_path
+  knowledge_graph.py    # kg_add_node, kg_add_edge, kg_query, PageRank, BFS
+  vector_store.py       # memory_store, memory_recall, HNSW index management
+  wiki.py               # wiki_ingest, wiki_crystallize, wiki_get, wiki_bootstrap
+  collective.py         # collective_store, collective_get, collective_list, LRU
+  tool_cache.py         # cache_check, cache_store
+  embeddings.py         # Pluggable providers: fastembed, ollama, vertex
+  embedding_admin.py    # embedding_status, embedding_migrate, embedding_benchmark
+  benchmark.py          # Embedding benchmark runner (isolated temp workspace)
+  db.py                 # DuckDB connection, schema init, migrations, retry decorator
+  settings.py           # Pydantic settings, workspace resolution, PROVIDER_REGISTRY</code></pre>
+
+<p>Entry point: <code>memory-graph</code> CLI → <code>memory_graph.server:main</code> → <code>mcp.run(transport="stdio")</code>.</p>
+
+<h3 class="section-anchor" id="embedding-providers-deep">Embedding Provider Interface</h3>
+<p>All providers implement a uniform contract:</p>
+
+<pre><code>class Provider:
+    provider: str           # "fastembed" | "ollama" | "vertex"
+    model_name: str         # e.g., "BAAI/bge-small-en-v1.5"
+    dimensions: int         # e.g., 384
+    embed_texts(texts, task_type) -> list[list[float]]
+    embed_query(query) -> list[float]
+    dimensions -> int</code></pre>
+
+<p>The <code>_get_provider()</code> function lazy-instantiates the configured provider and caches it as a module-level singleton. <code>reset_provider_cache()</code> is used by <code>embedding_migrate</code> to switch providers without restart.</p>
+
+<h3 class="section-anchor" id="search-fallback">Search Fallback Strategy</h3>
+<p>All search tools use a two-phase strategy:</p>
+
+<ol>
+  <li><strong>Primary: Semantic search</strong> via HNSW vector index with cosine similarity. This is the main signal.</li>
+  <li><strong>Fallback: ILIKE text matching</strong> only when embeddings yield no above-threshold results. Used as a complement, never a replacement — ILIKE fills the gaps where the embedding model might miss.</li>
+</ol>
+
+<p>This ensures reliable recall even when the embedding model's semantic understanding doesn't align perfectly with the query.</p>
+
+</div>
+
+<!-- ═══════════════ Scripts ═══════════════ -->
+<script>
+// Tab switching
+document.querySelectorAll('.tabs .tab-header').forEach(header => {
+  header.addEventListener('click', () => {
+    const tabGroup = header.parentElement.parentElement;
+    tabGroup.querySelectorAll('.tab-header').forEach(h => h.classList.remove('active'));
+    tabGroup.querySelectorAll('.tab-body').forEach(b => b.classList.remove('active'));
+    header.classList.add('active');
+    tabGroup.querySelector(`.tab-body#${header.dataset.tab}`).classList.add('active');
+  });
+});
+
+// Code tabs
+document.querySelectorAll('.code-tabs .ct-header').forEach(header => {
+  header.addEventListener('click', () => {
+    const tabGroup = header.parentElement.parentElement;
+    tabGroup.querySelectorAll('.ct-header').forEach(h => h.classList.remove('active'));
+    tabGroup.querySelectorAll('.ct-body').forEach(b => b.style.display = 'none');
+    header.classList.add('active');
+    tabGroup.querySelector(':scope > .ct-body').style.display = 'block';
+  });
+  // Activate first by default
+  const tabGroup = header.parentElement.parentElement;
+  if (header === tabGroup.querySelector('.ct-header')) {
+    header.classList.add('active');
+  }
+});
+
+// Accordion
+function toggleAccordion(header) {
+  const body = header.nextElementSibling;
+  const isOpen = header.classList.contains('open');
+  header.classList.toggle('open');
+  body.classList.toggle('open');
+}
+
+// Search
+const searchInput = document.getElementById('searchInput');
+const searchResults = document.getElementById('search-results');
+
+const searchIndex = [
+  {title: 'Overview', path: '#overview', content: 'memory-graph-mcp unified semantic memory for AI agents'},
+  {title: 'Install', path: '#install', content: 'Claude Code plugin pip uv from source installation'},
+  {title: 'Quickstart', path: '#quickstart', content: 'recall record_finding wiki_get three calls'},
+  {title: 'Architecture', path: '#architecture', content: 'MCP server FastMCP tool surface unified recall knowledge graph wiki collective'},
+  {title: 'Four Layers', path: '#four-layers', content: 'vector memories knowledge graph wiki collective cache four reinforcing layers'},
+  {title: 'Storage Layer', path: '#storage', content: 'DuckDB VSS HNSW single file workspace-scoped'},
+  {title: 'Lifecycle', path: '#lifecycle', content: 'draft canonical superseded node lifecycle reuse_count auto-promotion'},
+  {title: 'Knowledge Graph', path: '#kg', content: 'KG nodes edges PageRank BFS typed relationships'},
+  {title: 'KG Nodes', path: '#kg-nodes', content: 'node_id node_type label canonical_id properties status pagerank reuse_count summaries'},
+  {title: 'KG Edges', path: '#kg-edges', content: 'SOLVES CAUSED_BY DEPENDS_ON RELATED_TO USES_TOOL SUPERSEDES edge types'},
+  {title: 'PageRank', path: '#pagerank', content: 'iterative PageRank scoring importance graph structure damping factor'},
+  {title: 'BFS Expansion', path: '#bfs', content: 'breadth-first search expansion from seed nodes hops recall parameter'},
+  {title: 'Tools', path: '#tools', content: 'MCP tool surface twenty tools primary graph lifecycle cross-agent health embedding admin'},
+  {title: 'Primary Tools', path: '#primary-tools', content: 'recall record_finding wiki_get main write operations'},
+  {title: 'Graph Tools', path: '#graph-tools', content: 'kg_neighbors kg_path kg_resolve graph navigation'},
+  {title: 'Lifecycle Tools', path: '#lifecycle-tools', content: 'kg_promote kg_add_edge wiki_ingest advanced writes'},
+  {title: 'Cross-Agent Tools', path: '#cross-agent', content: 'collective_store collective_get cache_check cache_store cross-agent state TTL'},
+  {title: 'Health Tools', path: '#health-tools', content: 'memory_report memory_consolidate memory_stats wiki_bootstrap health admin'},
+  {title: 'Embedding Admin Tools', path: '#embedding-tools', content: 'embedding_status embedding_migrate embedding_benchmark provider administration'},
+  {title: 'Embedding Providers', path: '#embedding', content: 'fastembed ollama vertex local cloud pluggable providers'},
+  {title: 'Swapping Providers', path: '#embedding-swapping', content: 'swap embedding provider benchmark migrate dry_run apply'},
+  {title: 'Migration', path: '#embedding-migrate', content: 'embedding_migrate re-embed vectors new model batched plan apply'},
+  {title: 'Wiki Layer', path: '#wiki', content: 'wiki crystallized curated knowledge pages canonical KG nodes'},
+  {title: 'Wiki Bootstrap', path: '#wiki-bootstrap', content: 'wiki_bootstrap workspace scanning READMEs code summaries config files'},
+  {title: 'Wiki Crystallize', path: '#wiki-crystallize', content: 'wiki_crystallize auto-generate wiki page from canonical KG node'},
+  {title: 'Operating Protocol', path: '#protocol', content: 'recall before work record_finding after work standard workflow'},
+  {title: 'Finding Types', path: '#findings', content: 'solution decision insight problem pattern context finding types mapping'},
+  {title: 'Auto-Edges', path: '#auto-edges', content: 'auto-infer RELATED_TO edges semantic similarity threshold'},
+  {title: 'Auto-Promotion', path: '#auto-promotion', content: 'auto-promote draft to canonical reuse_count threshold three recalls'},
+  {title: 'Database Schema', path: '#db-schema', content: 'memories memory_embeddings kg_nodes kg_edges collective_memory tool_cache wiki_pages wiki_embeddings embedding_meta schema_version'},
+  {title: 'Schema Migrations', path: '#schema-migrations', content: 'v1 v2 v3 v4 v5 schema migrations additive only'},
+  {title: 'Concurrency', path: '#concurrency', content: 'DuckDB WAL concurrency retry decorator exponential backoff HNSW rebuild'},
+  {title: 'Configuration', path: '#settings', content: 'environment variables MEMORY_GRAPH_WORKSPACE embedding provider settings'},
+  {title: 'Code Structure', path: '#code-structure', content: 'module organization server unified intelligence knowledge_graph vector_store wiki collective tool_cache embeddings'},
+];
+
+searchInput.addEventListener('input', (e) => {
+  const q = e.target.value.toLowerCase().trim();
+  if (q.length < 2) { searchResults.style.display = 'none'; return; }
+
+  const matches = searchIndex.filter(item =>
+    item.title.toLowerCase().includes(q) ||
+    item.content.toLowerCase().includes(q) ||
+    item.path.toLowerCase().includes(q)
+  ).slice(0, 10);
+
+  if (matches.length === 0) { searchResults.style.display = 'none'; return; }
+
+  searchResults.innerHTML = matches.map(m =>
+    `<div class="sr-item" onclick="window.location.href='${m.path}'; searchResults.style.display='none';">
+      <div class="sr-title">${m.title}</div>
+      <div class="sr-path">${m.path}</div>
+    </div>`
+  ).join('');
+  searchResults.style.display = 'block';
+});
+
+searchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { searchResults.style.display = 'none'; searchInput.blur(); }
+  if (e.key === 'Enter') {
+    const first = searchResults.querySelector('.sr-item');
+    if (first) { first.click(); }
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.search-box') && !e.target.closest('#search-results')) {
+    searchResults.style.display = 'none';
+  }
+});
+
+// Sidebar active state on scroll
+const sections = document.querySelectorAll('.section-anchor');
+const sidebarLinks = document.querySelectorAll('.sidebar a');
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      const id = entry.target.id;
+      sidebarLinks.forEach(link => {
+        link.classList.toggle('active', link.getAttribute('href') === `#${id}`);
+      });
+    }
+  });
+}, { rootMargin: '-60px 0px -70% 0px', threshold: 0 });
+
+sections.forEach(s => observer.observe(s));
+
+// Smooth scroll for anchor links
+document.querySelectorAll('a[href^="#"]').forEach(a => {
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) { target.scrollIntoView({ behavior: 'smooth' }); }
+  });
+});
+</script>
+</body>
+</html>
