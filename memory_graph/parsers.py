@@ -69,7 +69,7 @@ def _regex_typescript(text: bytes) -> ParsedSummary:
         s["docstrings"].append(doc)
     exports = re.findall(r"export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)", content)
     s["exports"] = exports[:15]
-    interfaces = re.findall(r"^interface\s+(\w+)", content, re.MULTILINE)
+    interfaces = re.findall(r"(?:^|\s)interface\s+(\w+)", content)
     s["interfaces"] = interfaces[:15]
     return s
 
@@ -116,9 +116,9 @@ class BaseParser(abc.ABC):
             return None
         return content if content else None
 
-    def _build_parser(self) -> Any | None:
+    def _build_parser(self, path: Path) -> Any | None:
         """Load tree-sitter Language. Subclass implements _load_language."""
-        language = self._load_language()
+        language = self._load_language(path)
         if language is None:
             return None
         try:
@@ -131,14 +131,12 @@ class BaseParser(abc.ABC):
 class PythonParser(BaseParser):
     """Extract classes, functions, methods, docstrings from Python files."""
 
-    def _load_language(self) -> Any | None:
+    def _load_language(self, path: Path) -> Any | None:
         try:
-            from tree_sitter_languages import languages
-            lang = getattr(languages, "get_language", None)
-            if lang:
-                return lang("python")
-            return languages.python()
-        except (ImportError, AttributeError, KeyError, TypeError):
+            from tree_sitter_python import language
+            import tree_sitter
+            return tree_sitter.Language(language())
+        except (ImportError, AttributeError, ValueError, KeyError, TypeError):
             return None
 
     def parse(self, path: Path) -> ParsedSummary:
@@ -146,7 +144,7 @@ class PythonParser(BaseParser):
         if content is None:
             return _regex_python(content if content is not None else b"")
 
-        parser = self._build_parser()
+        parser = self._build_parser(path)
         if parser is None:
             return _regex_python(content)
 
@@ -179,16 +177,18 @@ class PythonParser(BaseParser):
     def _walk(self, node: Any, summary: ParsedSummary, class_name: str | None) -> None:
         for child in node.children:
             if child.type == "class_definition":
-                name_node = child.field("name")
+                name_node = child.child_by_field_name("name")
                 if name_node:
-                    name = name_node[0].text.decode(errors="replace")
+                    name = name_node.text.decode(errors="replace")
                     if not name.startswith("_"):
                         summary["classes"].append(name)
-                self._walk(child, summary, class_name=name)
+                    self._walk(child, summary, class_name=name)
+                else:
+                    self._walk(child, summary, class_name=class_name)
             elif child.type == "function_definition":
-                name_node = child.field("name")
+                name_node = child.child_by_field_name("name")
                 if name_node:
-                    name = name_node[0].text.decode(errors="replace")
+                    name = name_node.text.decode(errors="replace")
                     if not name.startswith("_"):
                         if class_name:
                             summary["methods"].append(f"{class_name}.{name}")
@@ -202,14 +202,14 @@ class PythonParser(BaseParser):
 class TypeScriptParser(BaseParser):
     """Extract classes, functions, interfaces, exports from TypeScript files."""
 
-    def _load_language(self) -> Any | None:
+    def _load_language(self, path: Path) -> Any | None:
         try:
-            from tree_sitter_languages import languages
-            lang = getattr(languages, "get_language", None)
-            if lang:
-                return lang("typescript")
-            return languages.typescript()
-        except (ImportError, AttributeError, KeyError, TypeError):
+            import tree_sitter
+            from tree_sitter_typescript import language_tsx, language_typescript
+            # TSX grammar for .tsx files, TypeScript for .ts/.mts/.cts
+            lang_fn = language_tsx if path.suffix == ".tsx" else language_typescript
+            return tree_sitter.Language(lang_fn())
+        except (ImportError, AttributeError, ValueError, KeyError, TypeError):
             return None
 
     def parse(self, path: Path) -> ParsedSummary:
@@ -217,7 +217,7 @@ class TypeScriptParser(BaseParser):
         if content is None:
             return _regex_typescript(content if content is not None else b"")
 
-        parser = self._build_parser()
+        parser = self._build_parser(path)
         if parser is None:
             return _regex_typescript(content)
 
@@ -272,6 +272,12 @@ class TypeScriptParser(BaseParser):
         name_node = node.child_by_field_name("name") or node.child_by_field_name("left")
         if name_node:
             return name_node.text.decode(errors="replace")
+        # Handle variable_declarator (const/let/var bindings)
+        for child in node.children:
+            if child.type == "variable_declarator":
+                n = child.child_by_field_name("name")
+                if n:
+                    return n.text.decode(errors="replace")
         # Fallback: first identifier child
         for child in node.children:
             if child.type in ("identifier", "type_identifier"):
@@ -282,14 +288,12 @@ class TypeScriptParser(BaseParser):
 class JavaScriptParser(BaseParser):
     """Extract classes, functions, exports from JavaScript files."""
 
-    def _load_language(self) -> Any | None:
+    def _load_language(self, path: Path) -> Any | None:
         try:
-            from tree_sitter_languages import languages
-            lang = getattr(languages, "get_language", None)
-            if lang:
-                return lang("javascript")
-            return languages.javascript()
-        except (ImportError, AttributeError, KeyError, TypeError):
+            import tree_sitter
+            from tree_sitter_javascript import language
+            return tree_sitter.Language(language())
+        except (ImportError, AttributeError, ValueError, KeyError, TypeError):
             return None
 
     def parse(self, path: Path) -> ParsedSummary:
@@ -297,7 +301,7 @@ class JavaScriptParser(BaseParser):
         if content is None:
             return _regex_javascript(content if content is not None else b"")
 
-        parser = self._build_parser()
+        parser = self._build_parser(path)
         if parser is None:
             return _regex_javascript(content)
 
@@ -348,18 +352,23 @@ class JavaScriptParser(BaseParser):
         if name_node:
             return name_node.text.decode(errors="replace")
         for child in node.children:
+            if child.type == "variable_declarator":
+                n = child.child_by_field_name("name")
+                if n:
+                    return n.text.decode(errors="replace")
+        for child in node.children:
             if child.type in ("identifier", "type_identifier"):
                 return child.text.decode(errors="replace")
         return None
 
-
 class ObjectScriptClassParser(BaseParser):
     """Parse .cls files (InterSystems ObjectScript class definitions)."""
 
-    def _load_language(self) -> Any | None:
+    def _load_language(self, path: Path) -> Any | None:
         try:
+            import tree_sitter
             from tree_sitter_objectscript_udl import language as _lang
-            return _lang()
+            return tree_sitter.Language(_lang())
         except ImportError:
             logger.debug("tree-sitter-objectscript not installed. Install with: pip install tree-sitter-objectscript")
             return None
@@ -369,7 +378,7 @@ class ObjectScriptClassParser(BaseParser):
         if content is None:
             return _regex_objectscript_class(content if content is not None else b"")
 
-        parser = self._build_parser()
+        parser = self._build_parser(path)
         if parser is None:
             return _regex_objectscript_class(content)
 
@@ -411,10 +420,11 @@ class ObjectScriptClassParser(BaseParser):
 class ObjectScriptRoutineParser(BaseParser):
     """Parse .mac/.rtn/.inc files (InterSystems ObjectScript routines)."""
 
-    def _load_language(self) -> Any | None:
+    def _load_language(self, path: Path) -> Any | None:
         try:
+            import tree_sitter
             from tree_sitter_objectscript_routine import language as _lang
-            return _lang()
+            return tree_sitter.Language(_lang())
         except ImportError:
             logger.debug("tree-sitter-objectscript_routine not installed. Install with: pip install tree-sitter-objectscript")
             return None
@@ -424,7 +434,7 @@ class ObjectScriptRoutineParser(BaseParser):
         if content is None:
             return _regex_objectscript_routine(content if content is not None else b"")
 
-        parser = self._build_parser()
+        parser = self._build_parser(path)
         if parser is None:
             return _regex_objectscript_routine(content)
 
@@ -547,21 +557,16 @@ class ParserManager:
         if not content:
             return {}
 
-        try:
-            text = content.encode("utf-8")
-        except UnicodeEncodeError:
-            text = content
-
         if ext == ".py":
-            return _regex_python(text)
+            return _regex_python(content)
         if ext in {".js", ".jsx", ".mjs", ".cjs"}:
-            return _regex_javascript(text)
+            return _regex_javascript(content)
         if ext in {".ts", ".tsx", ".mts", ".cts"}:
-            return _regex_typescript(text)
+            return _regex_typescript(content)
         if ext == ".cls":
-            return _regex_objectscript_class(text)
+            return _regex_objectscript_class(content)
         if ext in {".mac", ".inc", ".rtn"}:
-            return _regex_objectscript_routine(text)
+            return _regex_objectscript_routine(content)
         return {}
 
 
