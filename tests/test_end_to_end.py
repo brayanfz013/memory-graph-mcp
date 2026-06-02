@@ -44,6 +44,7 @@ _MODULE_NAMES = (
     "memory_graph.knowledge_graph",
     "memory_graph.collective",
     "memory_graph.tool_cache",
+    "memory_graph.parsers",
     "memory_graph.wiki",
     "memory_graph.intelligence",
     "memory_graph.unified",
