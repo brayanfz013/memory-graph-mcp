@@ -5,7 +5,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/brayanfz013/memory-graph-mcp@917e14cbaa06a6a7362473a8b72c91585e4750a7",
+        "git+https://github.com/brayanfz013/memory-graph-mcp@fa622a907f3945a38e71e55e349b4be95a2d8151",
         "memory-graph"
       ],
       "env": {
