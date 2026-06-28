@@ -5,13 +5,13 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/brayanfz013/memory-graph-mcp@fa622a907f3945a38e71e55e349b4be95a2d8151",
+        "git+https://github.com/brayanfz013/memory-graph-mcp@4f22364196107c42ec21e0fd1af5066ec0281092",
         "memory-graph"
       ],
       "env": {
-        "MEMORY_GRAPH_WORKSPACE": "{$CLAUDE_PROJECT_DIR}"
+        "MEMORY_GRAPH_WORKSPACE": "${CLAUDE_PROJECT_DIR}"
       },
-      "customInstructions": "Unified semantic memory for AI agents. MANDATORY at task start: call recall(query=<task>, top_k=5) before doing any work — it returns fused matches across memories+KG+wiki plus top_canonicals. After solving: call record_finding(finding_type, title, content, related_files, tags) to persist; this creates vector memory + KG node + auto-infers RELATED_TO edges + auto-crystallizes wiki on canonical promotion. Use wiki_get(canonical_id) to expand a recall hit into full long-form. For typed relationships (SOLVES, SUPERSEDES, DEPENDS_ON) use kg_add_edge. For multi-agent state use collective_store/get/list with TTL. For expensive idempotent calls use cache_check/cache_store. See PROTOCOL.md for the full operating manual."
+      "customInstructions": "Unified semantic memory for AI agents. MANDATORY at task start: call recall(query=<task>, top_k=5, compact=true) before doing any work — it returns fused matches across memories+KG+wiki plus top_canonicals; compact=true dedupes and trims to save tokens, and group_topics=true clusters hits by theme. After solving: call record_finding(finding_type, title, content, related_files, tags, sources=[file:line/URL/commit]) to persist; this creates vector memory + KG node + auto-infers RELATED_TO edges + auto-crystallizes wiki on canonical promotion. sources ground the claim and keep memory_gaps from flagging it. Use wiki_get(canonical_id, outline_only=true) then wiki_get(canonical_id, section='…') to load only what you need. Use memory_map to see the topic mind map and memory_gaps to find coverage holes. For typed relationships (SOLVES, SUPERSEDES, DEPENDS_ON) use kg_add_edge. For multi-agent state use collective_store/get/list with TTL. For expensive idempotent calls use cache_check/cache_store. See PROTOCOL.md for the full operating manual."
     }
   }
 }
