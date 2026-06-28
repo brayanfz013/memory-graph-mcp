@@ -1,6 +1,6 @@
 """memory-graph MCP server — unified memory layer.
 
-High-level tool surface (v0.4.4):
+High-level tool surface (v0.5.0):
 
   Primary (use these by default):
     - recall(query, scope, ...)         — semantic search across memories+KG+wiki
@@ -22,9 +22,13 @@ High-level tool surface (v0.4.4):
     - collective_store / collective_get / collective_list
     - cache_check / cache_store
 
+  Topic map + coverage:
+    - memory_map(rebuild, top_k)        — hierarchical topic mind map of the KG
+    - memory_gaps(limit)                — coverage critic + recommended actions
+
   Health / admin:
     - memory_report()                   — counts + types + top influential
-    - memory_consolidate(dry_run)       — purge expired entries
+    - memory_consolidate(dry_run)       — purge expired entries + rebuild topics
     - wiki_bootstrap(force, max_dirs)   — seed wiki from repo + canonicals
 
   Embedding provider administration:
@@ -56,6 +60,7 @@ from . import (
     intelligence,
     knowledge_graph,
     tool_cache,
+    topics,
     unified,
     wiki,
 )
@@ -72,13 +77,18 @@ mcp = FastMCP(
     "memory-graph",
     instructions=(
         "Unified semantic memory for AI agents. "
-        "Use `recall` for cross-scope semantic search (memories+KG+wiki), "
-        "`record_finding` to persist new knowledge with auto-edges, "
-        "`wiki_get` to fetch full wiki pages, `kg_neighbors`/`kg_path` "
-        "to traverse relationships, and `collective_*`/`cache_*` to share "
-        "state across agents. Lower-level primitives are still available "
-        "(kg_add_edge, wiki_ingest, kg_promote) but `record_finding` covers "
-        "most write paths automatically."
+        "Use `recall` for cross-scope semantic search (memories+KG+wiki) — pass "
+        "compact=True to cut tokens (dedupes facts, trims redundant blobs) and "
+        "group_topics=True to see results clustered by theme. "
+        "`record_finding` persists new knowledge with auto-edges; pass "
+        "sources=[file:line, URL, commit] to ground claims. "
+        "`wiki_get` fetches a page — use outline_only=True or section='…' to "
+        "load just what you need. `memory_map` shows the topic mind map; "
+        "`memory_gaps` reports coverage holes with recommended actions. "
+        "`kg_neighbors`/`kg_path` traverse relationships; `collective_*`/"
+        "`cache_*` share state across agents. Lower-level primitives "
+        "(kg_add_edge, wiki_ingest, kg_promote) remain available but "
+        "`record_finding` covers most write paths automatically."
     ),
 )
 
@@ -94,6 +104,8 @@ def recall(
     min_score: float = 0.45,
     node_type: str | None = None,
     hops: int = 1,
+    compact: bool = False,
+    group_topics: bool = False,
 ) -> dict[str, Any]:
     """Semantic search across memories, KG nodes, and wiki pages.
 
@@ -101,11 +113,19 @@ def recall(
     Returns fused, ranked results plus `top_canonicals` (most-relevant
     canonical_ids across scopes — feed these to `wiki_get` for detail).
 
+    Token-saving options (recommended for large stores):
+      compact=True       — drop redundant raw content from KG nodes, shorten
+                           wiki snippets, and remove memories already covered by
+                           a returned KG node. Same shape, far fewer tokens.
+      group_topics=True  — add a `topics` block clustering the KG hits by theme
+                           (the mind map) so you see structure, not a flat list.
+
     Prefer this over the legacy memory_recall/kg_query/wiki_query trio.
     """
     return unified.recall(
         query=query, scope=scope, top_k=top_k,
         min_score=min_score, node_type=node_type, hops=hops,
+        compact=compact, group_topics=group_topics,
     )
 
 
@@ -120,6 +140,7 @@ def record_finding(
     related_files: list[str] | None = None,
     tags: list[str] | None = None,
     source_agent: str | None = None,
+    sources: list[str] | None = None,
 ) -> dict[str, Any]:
     """Persist a finding — vector memory + KG node + auto-edges + auto-crystallize.
 
@@ -131,10 +152,14 @@ def record_finding(
       4. auto-promotes draft → canonical when reuse_count ≥ 3.
       5. auto-crystallizes a wiki page when the node becomes canonical.
 
+    `sources` are grounding anchors (file:line, URLs, commit SHAs) rendered as a
+    numbered Sources section when the page crystallizes. Grounded findings are
+    more trustworthy and keep `memory_gaps` from flagging them as unproven.
+
     Replaces the older memory_record_finding (kept as alias).
     """
     return intelligence.memory_record_finding(
-        finding_type, title, content, related_files, tags, source_agent,
+        finding_type, title, content, related_files, tags, source_agent, sources,
     )
 
 
@@ -147,10 +172,11 @@ def memory_record_finding(
     related_files: list[str] | None = None,
     tags: list[str] | None = None,
     source_agent: str | None = None,
+    sources: list[str] | None = None,
 ) -> dict[str, Any]:
     """Alias for `record_finding` (kept for backward compatibility)."""
     return intelligence.memory_record_finding(
-        finding_type, title, content, related_files, tags, source_agent,
+        finding_type, title, content, related_files, tags, source_agent, sources,
     )
 
 
@@ -158,13 +184,46 @@ def memory_record_finding(
 
 
 @mcp.tool()
-def wiki_get(canonical_id_or_title: str) -> dict[str, Any]:
-    """Fetch a full wiki page by canonical_id (preferred) or exact title.
+def wiki_get(
+    canonical_id_or_title: str,
+    outline_only: bool = False,
+    section: str | None = None,
+) -> dict[str, Any]:
+    """Fetch a wiki page by canonical_id (preferred) or exact title.
 
-    Returns the complete body (no truncation) plus tags + linked KG node.
+    Default returns the full body. Token-saving modes:
+      outline_only=True — title + preamble + section headings (`outline`) only,
+                          to decide if the page is worth loading in full.
+      section="Summary" — return just that one section's body.
+
     Use after `recall` to expand a `top_canonicals[i]` into its full doc.
     """
-    return wiki.wiki_get(canonical_id_or_title)
+    return wiki.wiki_get(canonical_id_or_title, outline_only=outline_only, section=section)
+
+
+# ── Topic mind map + coverage critic ──────────────────────────────
+
+
+@mcp.tool()
+def memory_map(rebuild: bool = False, top_k: int = 20) -> dict[str, Any]:
+    """Hierarchical topic map of the knowledge graph (Co-STORM-style mind map).
+
+    Clusters KG nodes into topics → subtopics over the RELATED_TO affinity
+    graph (no LLM). Reads the persisted map; pass rebuild=True to recompute.
+    Call this to orient by theme before a deep `recall`.
+    """
+    return topics.memory_map(rebuild=rebuild, top_k=top_k)
+
+
+@mcp.tool()
+def memory_gaps(limit: int = 20) -> dict[str, Any]:
+    """Coverage critic — where the knowledge graph is thin and what to do.
+
+    Surfaces isolated nodes, ungrounded canonicals, missing wiki pages,
+    promote-ready drafts, stale canonicals, and orphan wiki pages, each with a
+    concrete recommended action. Deterministic and cheap (no LLM).
+    """
+    return intelligence.memory_gaps(limit)
 
 
 # ── Graph navigation ──────────────────────────────────────────────

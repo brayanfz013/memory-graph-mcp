@@ -4,6 +4,30 @@ All notable changes to `memory-graph-mcp` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-06-28
+
+Knowledge-organization upgrade inspired by Stanford OVAL's [STORM / Co-STORM](https://github.com/stanford-oval/storm). We ported the *ideas* (hierarchical mind map, outline-first pages, source grounding, coverage critique) — **not** the LLM/DSPy generation pipeline — so the server stays local, fast, and zero-config. See [`docs/INSPIRATION.md`](docs/INSPIRATION.md) for what was adopted and what was deliberately left out.
+
+These features also target the real pain that motivated the work: `recall` returning bloated, redundant payloads (the same fact as a memory + KG node + wiki page) that burned tokens and diluted answer quality.
+
+### Added
+
+- **Hierarchical topic clustering — the "mind map" ([`memory_graph/topics.py`](memory_graph/topics.py), new `memory_map` tool).** Co-STORM organises collected knowledge into a dynamic concept hierarchy. We do the same with **no LLM and no new dependencies**: the `RELATED_TO` edges that `record_finding` already creates *are* a kNN affinity graph (their `weight` is the cosine similarity), so we run single-linkage union-find at two cosine thresholds → coarse **topics** containing tight **subtopics**. Each topic is labelled by its most central member (PageRank). Persisted via schema **v6** (`kg_topics` table + `kg_nodes.topic_id`). O(edges) — cheap even on large graphs.
+- **`recall(compact=True)` — token-saving mode.** Drops the redundant raw `content` blob from KG node properties (the `tldr_32`/`brief_96` summaries already carry the gist), shortens wiki snippets, and removes any memory already represented by a returned KG node (same underlying fact). Same response shape, materially fewer tokens.
+- **`recall(group_topics=True)`** adds a `topics` block clustering the KG hits by theme so callers see structure instead of a flat, duplicative list.
+- **Outline-first wiki ([`wiki_get`](memory_graph/wiki.py) `outline_only` / `section`).** Crystallized pages now carry a `## Contents` table-of-contents. `wiki_get(outline_only=True)` returns just the headings (decide before loading); `wiki_get(section="Summary")` returns one section. Pulls hundreds of tokens instead of the whole page.
+- **Source grounding (`record_finding(sources=[...])`).** Per-finding citations (file:line, URLs, commit SHAs) are stored on the node and rendered as a numbered `## Sources` section on crystallization. Findings report a `grounded` flag.
+- **`memory_gaps` coverage critic.** STORM's multi-perspective "what's missing?" questioning, approximated with deterministic structural signals: isolated nodes, ungrounded canonicals, missing wiki pages, promote-ready drafts, stale canonicals, orphan wiki pages — each with a concrete recommended action, sorted by impact.
+- **`memory_consolidate(dry_run=False)`** now rebuilds the topic map after cleanup so clusters track the live graph.
+
+### Tests
+
+- New [`tests/test_storm_features.py`](tests/test_storm_features.py): 18 hard tests asserting *behavioural* impact (clusters form & isolate outliers, compact actually shrinks payload and dedupes memories, outline/section return less than the full body, grounding round-trips, gaps are flagged and recommendations sorted). Full suite: **91 passing**, ruff clean.
+
+### Compatibility
+
+- All changes are additive. `recall` keeps its existing shape (new keys only appear with `compact`/`group_topics`); `wiki_get` and `record_finding` gained optional params with safe defaults. Schema v6 migrates additively (new table + nullable column).
+
 ## [0.4.4] — 2026-06-28
 
 Reliability fix. The MCP server crashed at **import time** — before `main()`'s try/except could run — whenever it was launched from a directory that failed workspace validation. This left Claude (and other agents) unable to connect to the server at all in those directories, with `MCP error -32000: Connection closed` in the logs.

@@ -166,17 +166,34 @@ def wiki_crystallize(canonical_id: str) -> dict[str, Any]:
         sections = [f"# {label}\n"]
         if tldr_32:
             sections.append(f"**TL;DR:** {tldr_32}\n")
+
+        # Build the body sections first, then prepend an outline/TOC so callers
+        # (and wiki_get(outline_only=True)) can navigate without loading it all.
+        body_sections: list[str] = []
         if brief_96:
-            sections.append(f"## Summary\n{brief_96}\n")
+            body_sections.append(f"## Summary\n{brief_96}\n")
         if summary_256:
-            sections.append(f"## Detail\n{summary_256}\n")
+            body_sections.append(f"## Detail\n{summary_256}\n")
         if content and content not in (brief_96, summary_256):
-            sections.append(f"## Full Content\n{content}\n")
+            body_sections.append(f"## Full Content\n{content}\n")
 
         files = props.get("files", [])
         if files:
             file_list = "\n".join(f"- `{f}`" for f in files)
-            sections.append(f"## Related Files\n{file_list}\n")
+            body_sections.append(f"## Related Files\n{file_list}\n")
+
+        # Grounding: per-finding sources rendered as numbered citations so claims
+        # stay traceable (Feature: citation grounding).
+        sources = props.get("sources", [])
+        if sources:
+            cite_list = "\n".join(f"{i}. {s}" for i, s in enumerate(sources, 1))
+            body_sections.append(f"## Sources\n{cite_list}\n")
+
+        headings = [s.split("\n", 1)[0].lstrip("# ").strip() for s in body_sections]
+        if len(headings) > 1:
+            toc = "\n".join(f"- {h}" for h in headings)
+            sections.append(f"## Contents\n{toc}\n")
+        sections.extend(body_sections)
 
         tags = props.get("tags", [])
         body = "\n".join(sections)
@@ -192,14 +209,50 @@ def wiki_crystallize(canonical_id: str) -> dict[str, Any]:
     return result
 
 
-@with_retry()
-def wiki_get(canonical_id_or_title: str) -> dict[str, Any]:
-    """Fetch the full wiki page (no truncation) by canonical_id or exact title.
+def _parse_sections(body: str) -> list[dict[str, str]]:
+    """Split a markdown body into top-level (## / #) sections.
 
-    Lookup priority:
-      1. canonical_id (preferred — stable slug)
-      2. exact title match (case-insensitive)
-    Returns body in full, plus tags, author, timestamps, and linked KG node.
+    Returns [{"heading": <text>, "body": <section markdown incl. heading>}].
+    The pre-heading preamble (title + TL;DR) is returned with heading "".
+    """
+    lines = body.splitlines(keepends=True)
+    sections: list[dict[str, str]] = []
+    current_heading = ""
+    buf: list[str] = []
+
+    def _flush() -> None:
+        if buf:
+            sections.append({"heading": current_heading, "body": "".join(buf).strip()})
+
+    for line in lines:
+        stripped = line.lstrip()
+        # Treat ## (and ###) as section breaks; a single # is the page title.
+        if stripped.startswith("## "):
+            _flush()
+            current_heading = stripped[3:].strip()
+            buf = [line]
+        else:
+            buf.append(line)
+    _flush()
+    return sections
+
+
+@with_retry()
+def wiki_get(
+    canonical_id_or_title: str,
+    outline_only: bool = False,
+    section: str | None = None,
+) -> dict[str, Any]:
+    """Fetch a wiki page by canonical_id or exact title.
+
+    By default returns the full body. Two token-saving modes:
+      outline_only=True — return only the title, TL;DR/preamble, and the list
+        of section headings (`outline`). Use this to decide whether a page is
+        worth loading in full.
+      section="Summary" — return only the body of the matching section
+        (case-insensitive). Pull just the part you need instead of the whole page.
+
+    Lookup priority: canonical_id (preferred, stable slug) → exact title.
     """
     with get_connection() as conn:
         _ensure_wiki_table(conn)
@@ -243,18 +296,45 @@ def wiki_get(canonical_id_or_title: str) -> dict[str, Any]:
                     "reuse_count": kg_row[5] if kg_row[5] is not None else 0,
                 }
 
-        return {
+        full_body: str = row[3] or ""
+        parsed = _parse_sections(full_body)
+        headings = [s["heading"] for s in parsed if s["heading"]]
+
+        base = {
             "page_id": row[0],
             "canonical_id": row[1],
             "title": row[2],
-            "body": row[3],
             "tags": json.loads(row[4]) if row[4] else [],
             "created_at": str(row[5]),
             "updated_at": str(row[6]),
             "author": row[7],
             "status": row[8],
             "kg_node": kg_node,
+            "outline": headings,
         }
+
+        if outline_only:
+            preamble = next((s["body"] for s in parsed if not s["heading"]), "")
+            base["preamble"] = preamble
+            base["mode"] = "outline_only"
+            return base
+
+        if section is not None:
+            match = next(
+                (s for s in parsed if s["heading"].lower() == section.lower()),
+                None,
+            )
+            if match is None:
+                base["error"] = f"No section '{section}'. Available: {headings}"
+                base["mode"] = "section_not_found"
+                return base
+            base["section"] = match["heading"]
+            base["body"] = match["body"]
+            base["mode"] = "section"
+            return base
+
+        base["body"] = full_body
+        return base
 
 
 @with_retry()

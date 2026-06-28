@@ -18,7 +18,7 @@ _dimensions: int | None = None
 _schema_ready: bool = False   # run init + migrate only once per process
 _vss_installed: bool = False  # INSTALL vss only once per process
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _T = TypeVar("_T")
 
@@ -226,7 +226,8 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             wiki_page        VARCHAR,
             confidence       DOUBLE DEFAULT 0.0,
             reuse_count      INTEGER DEFAULT 0,
-            last_validated_at TIMESTAMP
+            last_validated_at TIMESTAMP,
+            topic_id         VARCHAR
         )
     """)
 
@@ -310,6 +311,20 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             model_name  VARCHAR NOT NULL,
             dimensions  INTEGER NOT NULL,
             is_active   BOOLEAN NOT NULL DEFAULT true,
+            created_at  TIMESTAMP DEFAULT current_timestamp
+        )
+    """)
+
+    # v6: hierarchical topic clustering ("mind map"). Each kg_node may belong
+    # to one coarse topic; kg_topics holds the topic registry.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kg_topics (
+            topic_id    VARCHAR PRIMARY KEY,
+            label       VARCHAR NOT NULL,
+            summary     VARCHAR,
+            size        INTEGER DEFAULT 0,
+            subtopics   INTEGER DEFAULT 0,
+            top_node_id VARCHAR,
             created_at  TIMESTAMP DEFAULT current_timestamp
         )
     """)
@@ -399,6 +414,21 @@ def _migrate_schema(conn: duckdb.DuckDBPyConnection) -> None:
             )
         """)
         logger.info("Migrated schema to v5: embedding_meta table added")
+
+    if current_version < 6:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS kg_topics (
+                topic_id    VARCHAR PRIMARY KEY,
+                label       VARCHAR NOT NULL,
+                summary     VARCHAR,
+                size        INTEGER DEFAULT 0,
+                subtopics   INTEGER DEFAULT 0,
+                top_node_id VARCHAR,
+                created_at  TIMESTAMP DEFAULT current_timestamp
+            )
+        """)
+        _add_column_safe(conn, "kg_nodes", "topic_id", "VARCHAR")
+        logger.info("Migrated schema to v6: kg_topics + kg_nodes.topic_id (mind-map clustering)")
 
     conn.execute(
         "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",

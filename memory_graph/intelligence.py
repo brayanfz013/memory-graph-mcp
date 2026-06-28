@@ -178,7 +178,17 @@ def memory_consolidate(
         else:
             result["status"] = "preview"
 
-        return result
+    # Rebuild the topic mind-map after a real cleanup so clusters reflect the
+    # current graph (separate connection — build_topics manages its own).
+    if not dry_run:
+        try:
+            from . import topics as topics_mod
+            built = topics_mod.build_topics()
+            result["topics"] = built["stats"]
+        except Exception as exc:  # noqa: BLE001 — never let clustering block consolidate
+            result["topics_error"] = str(exc)
+
+    return result
 
 
 def kg_neighbors(
@@ -332,6 +342,7 @@ def memory_record_finding(
     related_files: list[str] | None = None,
     tags: list[str] | None = None,
     source_agent: str | None = None,
+    sources: list[str] | None = None,
 ) -> dict[str, Any]:
     """Record a structured finding — vector memory + KG node + auto-edges + auto-crystallize.
 
@@ -341,6 +352,11 @@ def memory_record_finding(
       3. auto-infer edges (RELATED_TO) to top-3 semantically similar existing nodes.
       4. maybe_promote: draft → canonical if reuse_count >= threshold.
       5. on canonical promotion: auto-crystallize wiki page (idempotent).
+
+    `sources` are per-finding grounding anchors (file:line, URLs, commit SHAs,
+    doc references). They are stored on the node and rendered as a numbered
+    "Sources" section when the page crystallizes, so claims stay traceable and
+    `memory_gaps` can flag ungrounded canonical knowledge.
 
     Each sub-call opens its own connection via get_connection().
     """
@@ -353,6 +369,8 @@ def memory_record_finding(
         metadata["tags"] = tags
     if source_agent:
         metadata["agent"] = source_agent
+    if sources:
+        metadata["sources"] = sources
 
     type_map = {
         "solution": "Solution",
@@ -414,6 +432,8 @@ def memory_record_finding(
         "status": kg_result.get("status", "draft"),
         "tldr_32": tldr_32,
         "auto_edges": auto_edges,
+        "sources": sources or [],
+        "grounded": bool(sources),
     }
     if promotion:
         result["promoted"] = promotion
@@ -516,3 +536,133 @@ def maybe_promote(canonical_id: str) -> dict[str, Any] | None:
     result = kg_mod.kg_promote(node_id, "canonical")
     logger.info("Auto-promoted %s → canonical (reuse_count=%d)", canonical_id, reuse_count)
     return result
+
+
+# ── Coverage critic (Co-STORM "what's missing?" analog, no LLM) ────
+
+GAP_STALE_DAYS = 90
+GAP_PROMOTE_REUSE = PROMOTION_REUSE_THRESHOLD
+
+
+@with_retry()
+def memory_gaps(limit: int = 20) -> dict[str, Any]:
+    """Structural coverage critic — surface where the knowledge graph is thin.
+
+    STORM/Co-STORM use multi-perspective questioning to find what a body of
+    knowledge is missing. Without an LLM we approximate that with deterministic
+    structural signals that each map to a concrete next action:
+
+      isolated          — node has no edges at all (disconnected knowledge)
+      ungrounded        — canonical node with no sources/related_files (no proof)
+      missing_wiki      — canonical node never crystallized into a wiki page
+      promote_ready     — draft reused ≥ threshold but still not canonical
+      stale_canonical   — canonical not validated in > GAP_STALE_DAYS days
+      orphan_wiki       — wiki page whose canonical_id no longer resolves
+
+    Returns a per-category list (capped at `limit`) plus a prioritized
+    `recommendations` summary. Cheap: a handful of indexed aggregate queries.
+    """
+    with get_connection() as conn:
+        isolated = conn.execute(
+            """SELECT n.node_id, n.label, n.node_type
+               FROM kg_nodes n
+               WHERE NOT EXISTS (SELECT 1 FROM kg_edges e
+                                 WHERE e.from_id = n.node_id OR e.to_id = n.node_id)
+               ORDER BY n.reuse_count DESC NULLS LAST, n.created_at DESC
+               LIMIT ?""",
+            [limit],
+        ).fetchall()
+
+        ungrounded = conn.execute(
+            """SELECT node_id, label, canonical_id
+               FROM kg_nodes
+               WHERE status = 'canonical'
+                 AND COALESCE(properties_json, '{}') NOT LIKE '%"sources"%'
+                 AND COALESCE(properties_json, '{}') NOT LIKE '%"files"%'
+               ORDER BY pagerank_score DESC
+               LIMIT ?""",
+            [limit],
+        ).fetchall()
+
+        missing_wiki = conn.execute(
+            """SELECT node_id, canonical_id, label
+               FROM kg_nodes
+               WHERE status = 'canonical'
+                 AND (wiki_page IS NULL
+                      OR wiki_page NOT IN (SELECT page_id FROM wiki_pages))
+               ORDER BY pagerank_score DESC
+               LIMIT ?""",
+            [limit],
+        ).fetchall()
+
+        promote_ready = conn.execute(
+            """SELECT node_id, label, reuse_count
+               FROM kg_nodes
+               WHERE status = 'draft' AND COALESCE(reuse_count, 0) >= ?
+               ORDER BY reuse_count DESC
+               LIMIT ?""",
+            [GAP_PROMOTE_REUSE, limit],
+        ).fetchall()
+
+        stale_canonical = conn.execute(
+            f"""SELECT node_id, label, last_validated_at
+                FROM kg_nodes
+                WHERE status = 'canonical'
+                  AND (last_validated_at IS NULL
+                       OR last_validated_at < current_timestamp - INTERVAL '{GAP_STALE_DAYS} days')
+                ORDER BY pagerank_score DESC
+                LIMIT ?""",
+            [limit],
+        ).fetchall()
+
+        orphan_wiki = conn.execute(
+            """SELECT page_id, title FROM wiki_pages
+               WHERE status = 'active'
+                 AND (canonical_id IS NULL
+                      OR canonical_id NOT IN
+                         (SELECT canonical_id FROM kg_nodes WHERE canonical_id IS NOT NULL))
+               LIMIT ?""",
+            [limit],
+        ).fetchall()
+
+    gaps = {
+        "isolated": [
+            {"node_id": r[0], "label": r[1], "node_type": r[2]} for r in isolated
+        ],
+        "ungrounded": [
+            {"node_id": r[0], "label": r[1], "canonical_id": r[2]} for r in ungrounded
+        ],
+        "missing_wiki": [
+            {"node_id": r[0], "canonical_id": r[1], "label": r[2]} for r in missing_wiki
+        ],
+        "promote_ready": [
+            {"node_id": r[0], "label": r[1], "reuse_count": r[2]} for r in promote_ready
+        ],
+        "stale_canonical": [
+            {"node_id": r[0], "label": r[1], "last_validated_at": str(r[2]) if r[2] else None}
+            for r in stale_canonical
+        ],
+        "orphan_wiki": [
+            {"page_id": r[0], "title": r[1]} for r in orphan_wiki
+        ],
+    }
+
+    actions = {
+        "isolated": "link with kg_add_edge or record a related finding",
+        "ungrounded": "re-record with sources=[...] to ground the claim",
+        "missing_wiki": "run wiki_bootstrap or record_finding to crystallize",
+        "promote_ready": "kg_promote(node_id, 'canonical')",
+        "stale_canonical": "re-validate and kg_promote to refresh last_validated_at",
+        "orphan_wiki": "delete the page or relink its canonical_id",
+    }
+    recommendations = [
+        {"gap": k, "count": len(v), "action": actions[k]}
+        for k, v in gaps.items() if v
+    ]
+    recommendations.sort(key=lambda r: r["count"], reverse=True)
+
+    return {
+        "gaps": gaps,
+        "total_gaps": sum(len(v) for v in gaps.values()),
+        "recommendations": recommendations,
+    }

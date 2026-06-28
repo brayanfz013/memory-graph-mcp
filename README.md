@@ -297,3 +297,5 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 Built on [Model Context Protocol](https://modelcontextprotocol.io), [DuckDB](https://duckdb.org) (with VSS extension for vector search), and [fastembed](https://github.com/qdrant/fastembed) for local embeddings.
 
 Protocol inspired by working patterns from [Anthropic Claude Code](https://claude.com/claude-code), [OpenAI Codex](https://github.com/openai/codex), and observation of multi-agent collaboration anti-patterns. Trajectory-distillation extensions on the [v0.5.0 roadmap](CHANGELOG.md) draw on Google Research's [ReasoningBank](https://github.com/google-research/reasoning-bank) (arXiv:2509.25140).
+
+The v0.5.0 knowledge-organization features (hierarchical topic mind map, outline-first wiki pages, source grounding, and the `memory_gaps` coverage critic) adapt ideas from Stanford OVAL's [STORM / Co-STORM](https://github.com/stanford-oval/storm) (MIT) — the *concepts*, re-expressed locally with no LLM and no `dspy` dependency. See [docs/INSPIRATION.md](docs/INSPIRATION.md) for what was adopted and what was left out.

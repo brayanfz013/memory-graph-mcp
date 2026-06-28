@@ -30,6 +30,8 @@ def recall(
     min_score: float = 0.45,
     node_type: str | None = None,
     hops: int = 1,
+    compact: bool = False,
+    group_topics: bool = False,
 ) -> dict[str, Any]:
     """Unified semantic recall over memories + KG nodes + wiki pages.
 
@@ -40,13 +42,21 @@ def recall(
         min_score: cosine similarity floor (0–1).
         node_type: optional KG node_type filter (Decision/Solution/...).
         hops: BFS expansion from KG seed nodes (0 to disable).
+        compact: token-saving mode. Drops the redundant raw `content` blob from
+            KG node properties (tldr_32/brief_96 already summarise it), shortens
+            wiki snippets, and drops any memory already represented by a returned
+            KG node (same underlying fact). Same shape, far fewer tokens.
+        group_topics: add a `topics` block grouping the returned KG nodes by
+            their persisted topic (the Co-STORM-style mind map) so the caller
+            sees the thematic structure instead of a flat list.
 
     Returns:
         {
           'memories': [{id, type, content, score, ...}, ...],
           'kg': {'nodes': [...], 'edges': [...]},
           'wiki': [{page_id, title, snippet, score, ...}, ...],
-          'top_canonicals': [<canonical_id>, ...]   # most-relevant cross-scope ids
+          'top_canonicals': [<canonical_id>, ...],  # most-relevant cross-scope ids
+          'topics': [...]   # only when group_topics=True
         }
     """
     if scope not in VALID_SCOPES:
@@ -88,7 +98,90 @@ def recall(
         )[:top_k]
     ]
     out["search_mode"] = "semantic"
+
+    if group_topics and "kg" in out:
+        out["topics"] = _group_by_topic(out["kg"].get("nodes", []))
+
+    if compact:
+        _apply_compaction(out)
+
     return out
+
+
+def _group_by_topic(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group recalled KG nodes by their persisted topic_id (the mind map).
+
+    Nodes without a topic land under a synthetic 'ungrouped' bucket. Returns
+    topics largest-first so the most prominent theme reads first.
+    """
+    if not nodes:
+        return []
+    node_ids = [n["node_id"] for n in nodes]
+    topic_by_node: dict[str, str | None] = {}
+    label_by_topic: dict[str, str] = {}
+    with get_connection() as conn:
+        ph = ", ".join("?" for _ in node_ids)
+        rows = conn.execute(
+            f"SELECT node_id, topic_id FROM kg_nodes WHERE node_id IN ({ph})",
+            node_ids,
+        ).fetchall()
+        for nid, tid in rows:
+            topic_by_node[nid] = tid
+        topic_ids = {t for t in topic_by_node.values() if t}
+        if topic_ids:
+            tph = ", ".join("?" for _ in topic_ids)
+            for tid, label in conn.execute(
+                f"SELECT topic_id, label FROM kg_topics WHERE topic_id IN ({tph})",
+                list(topic_ids),
+            ).fetchall():
+                label_by_topic[tid] = label
+
+    buckets: dict[str, dict[str, Any]] = {}
+    for n in nodes:
+        tid = topic_by_node.get(n["node_id"]) or "ungrouped"
+        bucket = buckets.setdefault(
+            tid,
+            {
+                "topic_id": None if tid == "ungrouped" else tid,
+                "label": label_by_topic.get(tid, "(ungrouped)"),
+                "members": [],
+            },
+        )
+        bucket["members"].append({
+            "node_id": n["node_id"],
+            "label": n.get("label"),
+            "score": n.get("semantic_score", 0.0),
+        })
+    return sorted(buckets.values(), key=lambda b: len(b["members"]), reverse=True)
+
+
+def _apply_compaction(out: dict[str, Any]) -> None:
+    """Trim redundant payload in-place to cut token cost (see recall(compact=…))."""
+    kg_nodes = out.get("kg", {}).get("nodes", []) if isinstance(out.get("kg"), dict) else []
+
+    # memory_ids already represented by a returned KG node → drop the dup memory
+    represented_mem_ids: set[str] = set()
+    for n in kg_nodes:
+        props = n.get("properties") or {}
+        mem_id = props.get("memory_id")
+        if mem_id:
+            represented_mem_ids.add(mem_id)
+        # strip the heavy raw content; tldr_32 / brief_96 carry the gist
+        if isinstance(props, dict) and "content" in props:
+            slim = {k: v for k, v in props.items() if k != "content"}
+            n["properties"] = slim
+
+    if "memories" in out and represented_mem_ids:
+        out["memories"] = [
+            m for m in out["memories"] if m.get("id") not in represented_mem_ids
+        ]
+
+    for w in out.get("wiki", []) or []:
+        snip = w.get("snippet") or ""
+        if len(snip) > 200:
+            w["snippet"] = snip[:200] + "…"
+
+    out["compact"] = True
 
 
 def _recall_memories(
