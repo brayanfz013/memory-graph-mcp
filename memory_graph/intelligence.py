@@ -538,6 +538,62 @@ def maybe_promote(canonical_id: str) -> dict[str, Any] | None:
     return result
 
 
+def memory_primer(topics_k: int = 8, canonicals_k: int = 8) -> dict[str, Any]:
+    """Compact session orientation — call once at the start of a task.
+
+    Returns a small, token-cheap snapshot so an agent (or a SessionStart hook)
+    can ground itself before working: the top topics (mind map), the most
+    influential canonical knowledge, a one-line coverage summary, and store
+    size. Designed to fit in a few hundred tokens — it deliberately returns
+    labels and ids, not bodies. Follow up with recall(compact=True) and
+    wiki_get(outline_only=True) to drill in.
+    """
+    from . import topics as topics_mod
+
+    try:
+        mp = topics_mod.memory_map(top_k=topics_k)
+        topic_list = [
+            {"topic_id": t.get("topic_id"), "label": t.get("label"), "size": t.get("size")}
+            for t in mp.get("topics", [])
+        ]
+    except Exception as exc:  # noqa: BLE001
+        topic_list = []
+        logger.warning("primer: topic map failed: %s", exc)
+
+    gaps = memory_gaps(limit=1)
+    gap_summary = {r["gap"]: r["count"] for r in gaps.get("recommendations", [])}
+
+    with get_connection() as conn:
+        # Most influential knowledge that actually has a stable canonical id,
+        # canonical status first so the primer points at curated knowledge.
+        key_rows = conn.execute(
+            """SELECT canonical_id, label, node_type FROM kg_nodes
+               WHERE canonical_id IS NOT NULL
+               ORDER BY (status = 'canonical') DESC, pagerank_score DESC,
+                        reuse_count DESC NULLS LAST
+               LIMIT ?""",
+            [canonicals_k],
+        ).fetchall()
+        key_canonicals = [
+            {"canonical_id": r[0], "label": r[1], "node_type": r[2]} for r in key_rows
+        ]
+        counts = {
+            "memories": (conn.execute("SELECT COUNT(*) FROM memories").fetchone() or (0,))[0],
+            "kg_nodes": (conn.execute("SELECT COUNT(*) FROM kg_nodes").fetchone() or (0,))[0],
+            "canonical": (conn.execute(
+                "SELECT COUNT(*) FROM kg_nodes WHERE status='canonical'").fetchone() or (0,))[0],
+            "wiki_pages": (conn.execute("SELECT COUNT(*) FROM wiki_pages").fetchone() or (0,))[0],
+        }
+
+    return {
+        "topics": topic_list,
+        "key_canonicals": key_canonicals,
+        "coverage_gaps": gap_summary,
+        "store": counts,
+        "next": "recall(query, compact=true) → wiki_get(canonical_id, outline_only=true)",
+    }
+
+
 # ── Coverage critic (Co-STORM "what's missing?" analog, no LLM) ────
 
 GAP_STALE_DAYS = 90

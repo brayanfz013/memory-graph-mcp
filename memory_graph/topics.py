@@ -8,19 +8,26 @@ Design (no LLM, no new dependencies, no vector recomputation):
 
   record_finding already builds a kNN similarity graph for free — it inserts
   RELATED_TO edges whose `weight` is the cosine similarity to the top-N most
-  similar existing nodes. We treat that edge set as the affinity graph and run
-  single-linkage agglomerative clustering at TWO cosine thresholds via
-  union-find:
+  similar existing nodes. We treat that edge set as the affinity graph.
 
-    * `loose` threshold  → coarse *topics*    (broad themes)
-    * `tight` threshold  → fine  *subtopics*  (tight clusters within a topic)
+  Coarse *topics* come from **weighted label propagation** (LPA), a standard
+  near-linear community-detection algorithm: each node iteratively adopts the
+  label with the greatest summed edge weight among its neighbours until stable.
+  We use LPA rather than connected-components/union-find because the affinity
+  graph is dense and every edge is already ≥ the auto-edge floor (~0.62), so
+  single-linkage would chain everything into one giant blob — validated on real
+  data (a 285-node store collapsed to a single 224-node "topic"). LPA instead
+  finds genuine communities (that same store → ~38 topics, largest ≈23).
+
+  Fine *subtopics* are connected components at a higher `tight` cosine threshold
+  *within* each topic — cheap and chain-safe because the community is small.
 
   Each topic is labelled by its most central member (highest PageRank, then
   reuse_count). Topics are persisted (kg_nodes.topic_id + kg_topics table) so
   `recall` can group/dedupe cheaply and `memory_gaps` can reason about coverage.
 
-Complexity is O(E·α(N)) — linear in the number of edges — so it stays cheap
-even on large graphs, and it never re-embeds anything.
+Complexity is O(iters·E) — near-linear — so it stays cheap on large graphs and
+never re-embeds anything.
 """
 
 from __future__ import annotations
@@ -35,11 +42,13 @@ from .knowledge_graph import slugify
 
 logger = logging.getLogger(__name__)
 
-# Default cosine thresholds. `loose` must be ≤ AUTO_EDGE_MIN_SCORE (0.62) or no
-# edge would survive it; we deliberately sit at/just-below the edge floor for
-# topics and above it for subtopics.
-DEFAULT_LOOSE = 0.55
-DEFAULT_TIGHT = 0.68
+# `loose` is the minimum edge weight admitted into the community-detection
+# graph (a noise floor; default = the auto-edge creation floor, i.e. keep all
+# real affinity edges). `tight` is the cosine cutoff that splits a topic into
+# subtopics via connected components.
+DEFAULT_LOOSE = 0.62
+DEFAULT_TIGHT = 0.80
+_LPA_MAX_ITER = 30
 _CLUSTER_REL_TYPES = ("RELATED_TO",)
 
 
@@ -99,6 +108,48 @@ def _components(
     groups: dict[str, set[str]] = defaultdict(set)
     for nid in touched:
         groups[uf.find(nid)].add(nid)
+    return groups
+
+
+def _label_propagation(
+    edges: list[tuple[str, str, float]],
+    min_weight: float,
+    max_iter: int = _LPA_MAX_ITER,
+) -> dict[str, set[str]]:
+    """Weighted label propagation → communities. Deterministic.
+
+    Each node starts as its own label, then repeatedly adopts the label with the
+    greatest summed neighbour edge weight. Ties (and the node scan order) break
+    by smallest label id so the result is reproducible across runs. Only nodes
+    touched by an admitted edge participate; isolated nodes are left out.
+    """
+    adj: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for src, tgt, weight in edges:
+        if weight < min_weight or src == tgt:
+            continue
+        adj[src].append((tgt, weight))
+        adj[tgt].append((src, weight))
+
+    nodes = sorted(adj)
+    labels: dict[str, str] = {n: n for n in nodes}
+
+    for _ in range(max_iter):
+        changed = False
+        for node in nodes:
+            tally: dict[str, float] = defaultdict(float)
+            for neighbour, weight in adj[node]:
+                tally[labels[neighbour]] += weight
+            # max summed weight, deterministic tie-break on smallest label
+            best = max(sorted(tally), key=lambda lbl: tally[lbl])
+            if labels[node] != best:
+                labels[node] = best
+                changed = True
+        if not changed:
+            break
+
+    groups: dict[str, set[str]] = defaultdict(set)
+    for node, label in labels.items():
+        groups[label].add(node)
     return groups
 
 
@@ -190,7 +241,8 @@ def build_topics(
         _ensure_topic_schema(conn)
         edges, meta = _load_graph(conn)
 
-        coarse = _components(edges, loose)
+        # Coarse topics via weighted community detection (chain-safe on dense graphs).
+        coarse = _label_propagation(edges, min_weight=loose)
         # Keep only real clusters (size ≥ 2); singletons are "unclustered".
         coarse = {root: members for root, members in coarse.items() if len(members) >= 2}
 

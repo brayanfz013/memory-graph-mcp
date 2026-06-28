@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "memory-graph",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Unified semantic memory for AI agents — per-repo DuckDB store with semantic recall, typed knowledge graph, auto-crystallized wiki, cross-agent coordination, and pluggable embedding providers (fastembed/ollama/vertex) with built-in benchmark + migration tooling. Ships with the usage protocol as a bundled skill.",
   "author": {
     "name": "brayanfz013",

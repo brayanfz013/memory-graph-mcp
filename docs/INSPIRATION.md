@@ -30,7 +30,7 @@ have.
 
 | STORM / Co-STORM idea | Our adaptation (local, no LLM) | Where |
 | --- | --- | --- |
-| **Dynamic mind map** — hierarchical concept structure over gathered info | Hierarchical clustering over the `RELATED_TO` affinity graph (`weight` = cosine sim from `record_finding`). Single-linkage union-find at two thresholds → topics → subtopics. No re-embedding, O(edges). | `memory_graph/topics.py`, `memory_map` tool, schema v6 |
+| **Dynamic mind map** — hierarchical concept structure over gathered info | Community detection over the `RELATED_TO` affinity graph (`weight` = cosine sim from `record_finding`): weighted **label propagation** for coarse topics, then connected components at a tighter threshold for subtopics. No re-embedding, near-linear. (We started with single-linkage union-find but it chained the dense graph into one giant blob on real data — LPA fixed it; see CHANGELOG v0.5.1.) | `memory_graph/topics.py`, `memory_map` tool, schema v6 |
 | **Outline-first article writing** | Crystallized wiki pages carry a `## Contents` outline; `wiki_get(outline_only=…/section=…)` returns just the headings or one section. | `memory_graph/wiki.py` |
 | **Per-sentence source grounding / citations** | `record_finding(sources=[...])` stores grounding anchors and renders a numbered `## Sources` section; findings expose a `grounded` flag. | `memory_graph/intelligence.py`, `wiki.py` |
 | **Multi-perspective "what's missing?" questioning** | Deterministic structural coverage critic: isolated nodes, ungrounded canonicals, missing wikis, promote-ready drafts, stale canonicals, orphan pages — each with a recommended action. | `memory_gaps` in `memory_graph/intelligence.py` |

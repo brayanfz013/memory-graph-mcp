@@ -315,6 +315,35 @@ class MemoryGapsTests(StormFeatureTestCase):
         self.assertEqual(gaps["total_gaps"], sum(len(v) for v in gaps["gaps"].values()))
 
 
+# ── Session primer ────────────────────────────────────────────────
+
+
+class MemoryPrimerTests(StormFeatureTestCase):
+    def test_primer_returns_compact_orientation(self) -> None:
+        self._seed_duckdb_cluster()
+        self.mods["intelligence"].memory_record_finding(
+            finding_type="decision", title="Canonical anchor",
+            content="A decision promoted to canonical for the primer.",
+        )
+        primer = self.mods["intelligence"].memory_primer()
+        for key in ("topics", "key_canonicals", "coverage_gaps", "store", "next"):
+            self.assertIn(key, primer)
+        self.assertIsInstance(primer["topics"], list)
+        self.assertIsInstance(primer["store"], dict)
+        self.assertGreaterEqual(primer["store"]["memories"], 1)
+        # Primer must stay token-cheap: ids/labels, never bodies.
+        self.assertLess(len(json.dumps(primer)), 6000)
+
+    def test_primer_key_canonicals_carry_canonical_ids(self) -> None:
+        rec = self.mods["intelligence"].memory_record_finding(
+            finding_type="solution", title="Has a canonical id", content="x",
+        )
+        self.assertTrue(rec["canonical_id"])
+        primer = self.mods["intelligence"].memory_primer()
+        for c in primer["key_canonicals"]:
+            self.assertTrue(c.get("canonical_id"))
+
+
 # ── Consolidation rebuilds the topic map ──────────────────────────
 
 

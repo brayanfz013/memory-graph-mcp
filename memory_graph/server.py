@@ -1,6 +1,6 @@
 """memory-graph MCP server — unified memory layer.
 
-High-level tool surface (v0.5.0):
+High-level tool surface (v0.5.1):
 
   Primary (use these by default):
     - recall(query, scope, ...)         — semantic search across memories+KG+wiki
@@ -83,7 +83,9 @@ mcp = FastMCP(
         "`record_finding` persists new knowledge with auto-edges; pass "
         "sources=[file:line, URL, commit] to ground claims. "
         "`wiki_get` fetches a page — use outline_only=True or section='…' to "
-        "load just what you need. `memory_map` shows the topic mind map; "
+        "load just what you need. Call `memory_primer` once at task start to "
+        "orient (top topics + key canonicals + coverage, token-cheap) — ideal "
+        "after a long chat is compacted. `memory_map` shows the topic mind map; "
         "`memory_gaps` reports coverage holes with recommended actions. "
         "`kg_neighbors`/`kg_path` traverse relationships; `collective_*`/"
         "`cache_*` share state across agents. Lower-level primitives "
@@ -202,6 +204,19 @@ def wiki_get(
 
 
 # ── Topic mind map + coverage critic ──────────────────────────────
+
+
+@mcp.tool()
+def memory_primer(topics_k: int = 8, canonicals_k: int = 8) -> dict[str, Any]:
+    """Compact session orientation — call ONCE at task start to ground yourself.
+
+    Returns a token-cheap snapshot: top topics (mind map), most influential
+    canonical knowledge, a one-line coverage summary, and store size — labels
+    and ids only, no bodies. Then drill in with recall(compact=True) and
+    wiki_get(outline_only=True). Ideal for a SessionStart hook so context never
+    starts cold, even after a long chat is compacted.
+    """
+    return intelligence.memory_primer(topics_k=topics_k, canonicals_k=canonicals_k)
 
 
 @mcp.tool()

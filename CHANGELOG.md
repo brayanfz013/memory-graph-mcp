@@ -4,6 +4,41 @@ All notable changes to `memory-graph-mcp` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-06-28
+
+Quality fix + usability, validated against a 285-node / 301-memory production
+store (`/home/bubuntu/IA`). The store itself was healthy — 100% embedding
+coverage, no dimension mismatch, live recall scoring 0.75 on real queries — so
+"the agent loses track in long chats" was confirmed to be a *usage/token*
+problem, not data corruption. Two concrete responses:
+
+### Fixed
+
+- **Topic clustering no longer collapses into one giant blob.** v0.5.0 used
+  single-linkage union-find; because every auto-edge is already ≥ ~0.62 cosine,
+  the dense real graph chained into a single 224-node "topic" (useless as a mind
+  map). Replaced the coarse pass with **weighted label propagation** (standard
+  near-linear community detection). Same store now yields ~38 coherent topics
+  (largest ≈23) with descriptive labels. Subtopics remain connected-components
+  at the tighter threshold. `memory_graph/topics.py`.
+
+### Added
+
+- **`memory_primer` tool** — a compact, token-cheap session orientation (top
+  topics + most influential canonicals + one-line coverage summary + store
+  size; labels/ids only, no bodies). Call it once at task start — or wire it to
+  a Claude Code **SessionStart hook** — so context never starts cold and the
+  agent re-grounds after a long chat is compacted. This directly targets
+  "Claude gets lost / can't find past work."
+
+### Validated (real data, see scripts in PR description)
+
+- `recall(compact=True)` cut payload **~55% on real queries** (a `top_k=8`
+  recall returned ~60 KB ≈ 15K tokens; compact ≈ 24 KB) while preserving the top
+  hit — the main lever against context bloat in long sessions.
+- `memory_gaps` surfaced actionable real debt: 50 promote-ready drafts, 31
+  isolated nodes, 13 ungrounded canonicals.
+
 ## [0.5.0] — 2026-06-28
 
 Knowledge-organization upgrade inspired by Stanford OVAL's [STORM / Co-STORM](https://github.com/stanford-oval/storm). We ported the *ideas* (hierarchical mind map, outline-first pages, source grounding, coverage critique) — **not** the LLM/DSPy generation pipeline — so the server stays local, fast, and zero-config. See [`docs/INSPIRATION.md`](docs/INSPIRATION.md) for what was adopted and what was deliberately left out.

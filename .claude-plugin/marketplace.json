@@ -11,7 +11,7 @@
       "name": "memory-graph",
       "source": "./",
       "description": "Per-repo DuckDB memory store with semantic recall, knowledge graph, wiki crystallization, cross-agent coordination, and pluggable embedding providers (fastembed/ollama/vertex) with benchmark + migration tooling. Bundles the usage protocol as a skill.",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "category": "memory",
       "tags": ["memory", "knowledge-graph", "mcp", "semantic-recall", "duckdb"]
     }
