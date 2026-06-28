@@ -48,6 +48,41 @@ class WorkspaceResolutionTests(unittest.TestCase):
                     self.settings_mod.resolve_workspace_path()
 
 
+class GracefulStorageFallbackTests(unittest.TestCase):
+    """resolve_storage() must never raise at import time. Invalid directories
+    (home, editor installs, markerless folders) fall back to a global per-path
+    storage dir so the MCP server still starts instead of dying on import.
+    """
+
+    def setUp(self) -> None:
+        self.settings_mod = importlib.import_module("memory_graph.settings")
+
+    def test_project_root_uses_workspace_scoped_storage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            (workspace / ".git").mkdir()
+
+            with patch.dict(os.environ, {"MEMORY_GRAPH_WORKSPACE": str(workspace)}, clear=False):
+                ws, db_dir = self.settings_mod.resolve_storage()
+
+            self.assertEqual(ws, workspace.resolve())
+            self.assertEqual(db_dir, workspace.resolve() / ".memory-graph")
+            self.assertTrue(db_dir.is_dir())
+
+    def test_markerless_dir_falls_back_without_raising(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)  # no project markers
+
+            with patch.dict(os.environ, {"MEMORY_GRAPH_WORKSPACE": str(workspace)}, clear=False):
+                ws, db_dir = self.settings_mod.resolve_storage()
+
+            # workspace_path still points at the real directory (file-scanning root)
+            self.assertEqual(ws, workspace.resolve())
+            # but the DB lives under the global fallback root, not in the project tree
+            self.assertIn(self.settings_mod.GLOBAL_FALLBACK_ROOT, db_dir.parents)
+            self.assertTrue(db_dir.is_dir())
+
+
 class TransientLockRetryTests(unittest.TestCase):
     """v0.4.0+ relies on DuckDB's WAL-based write lock plus a with_retry decorator
     instead of an explicit acquire_workspace_lock advisory file. This verifies

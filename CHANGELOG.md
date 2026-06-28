@@ -4,6 +4,23 @@ All notable changes to `memory-graph-mcp` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] — 2026-06-28
+
+Reliability fix. The MCP server crashed at **import time** — before `main()`'s try/except could run — whenever it was launched from a directory that failed workspace validation. This left Claude (and other agents) unable to connect to the server at all in those directories, with `MCP error -32000: Connection closed` in the logs.
+
+### Fixed (server failed to start outside project roots)
+
+- **`memory_graph/settings.py`**: workspace resolution no longer raises during module import. `MemoryGraphSettings`'s `db_path` / `lock_path` / `workspace_path` defaults previously called the strict `resolve_workspace_path()`, which raised `WorkspaceResolutionError` for the home directory (`refusing to use broad path`), editor install dirs, and any folder without a project marker (`.git`, `pyproject.toml`, etc.). Because `settings = MemoryGraphSettings()` runs at import, the exception killed the whole process before the server could speak JSON-RPC, so the entire MCP connection dropped.
+- New `resolve_storage()` degrades gracefully: a valid project root still gets workspace-scoped storage at `<workspace>/.memory-graph/`; any other directory falls back to a per-path global dir at `~/.memory-graph/fallback/<name>-<hash>` and logs a `WARNING` to stderr instead of crashing. The strict `resolve_workspace_path()` is retained (and still raises) for callers that want it; the security intent — never silently writing memory into the home root or an editor install dir — is preserved by the fallback location.
+
+### Why this needed a release
+
+Users launching Claude Code from `~` or from a folder without project markers saw memory-graph fail to connect on every session, and no memory was recorded. Storage now always resolves to a writable location, so the server starts everywhere.
+
+### Tests
+
+- Added `GracefulStorageFallbackTests` covering project-root scoping and the no-raise markerless fallback. Full suite: 53 passing.
+
 ## [0.4.3] — 2026-05-19
 
 Plugin install fix. `/plugin install` was failing schema validation against the official Claude Code plugin manifest because v0.4.2 used fields that do not exist in the spec.

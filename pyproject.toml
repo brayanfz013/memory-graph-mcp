@@ -1,6 +1,6 @@
 [project]
 name = "memory-graph-mcp"
-version = "0.4.3"
+version = "0.4.4"
 description = "Unified semantic memory MCP server — cross-scope recall (memories+KG+wiki), auto-edge inference, auto-crystallized wiki, lifecycle management"
 readme = "README.md"
 license = { text = "Apache-2.0" }

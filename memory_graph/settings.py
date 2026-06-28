@@ -6,12 +6,20 @@ so each project keeps its own knowledge isolated.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import sys
 from pathlib import Path
 from typing import Iterable
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Global fallback storage root, used only when the active directory is not a
+# safe project root (e.g. the home directory, or a folder with no project
+# markers). Keeps memory off the project tree while still letting the server
+# start instead of crashing at import time.
+GLOBAL_FALLBACK_ROOT = Path.home() / ".memory-graph"
 
 WORKSPACE_MARKERS = (
     ".git",
@@ -104,12 +112,54 @@ def resolve_workspace_path() -> Path:
     )
 
 
-def _resolve_default_db() -> str:
-    """Return a workspace-scoped DB path based on the validated workspace root."""
-    workspace = resolve_workspace_path()
-    db_dir = Path(workspace) / ".memory-graph"
-    db_dir.mkdir(parents=True, exist_ok=True)
-    return str(db_dir / "memory.duckdb")
+def _best_effort_workspace() -> Path:
+    """Return the active directory from env/cwd without validating it.
+
+    Never raises. Used as the file-scanning root (e.g. wiki ingest) and as the
+    key for fallback storage when the directory is not a safe project root.
+    """
+    for _source, raw_workspace in _iter_workspace_candidates():
+        workspace = _normalize_workspace(raw_workspace)
+        if workspace is not None and workspace.exists() and workspace.is_dir():
+            return workspace
+    return Path.cwd()
+
+
+def resolve_storage() -> tuple[Path, Path]:
+    """Resolve (workspace_path, db_dir) without ever raising.
+
+    When the active directory is a safe project root, memory is scoped to
+    ``<workspace>/.memory-graph`` (per-project isolation, the normal case).
+    When it is not — the home directory, an editor install dir, or a folder
+    with no project markers — we fall back to a per-path directory under
+    ``~/.memory-graph/fallback/<name>-<hash>`` and warn on stderr, so the
+    server still starts and tools keep working instead of the whole MCP
+    connection dying at import time.
+    """
+    workspace = _best_effort_workspace()
+    try:
+        validated = resolve_workspace_path()
+        db_dir = validated / ".memory-graph"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        return validated, db_dir
+    except WorkspaceResolutionError as exc:
+        digest = hashlib.sha1(str(workspace).encode("utf-8")).hexdigest()[:12]
+        label = workspace.name or "root"
+        db_dir = GLOBAL_FALLBACK_ROOT / "fallback" / f"{label}-{digest}"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        sys.stderr.write(
+            f"[memory-graph] WARNING: {exc} "
+            f"Falling back to global storage at {db_dir}. "
+            "Add a project marker (e.g. an empty .git or CLAUDE.md) to scope "
+            "memory to this directory instead.\n",
+        )
+        sys.stderr.flush()
+        return workspace, db_dir
+
+
+# Resolved once at import time so workspace_path, db_path and lock_path stay
+# mutually consistent (a single fallback decision, not three independent ones).
+_WORKSPACE_PATH, _DB_DIR = resolve_storage()
 
 
 class MemoryGraphSettings(BaseSettings):
@@ -123,12 +173,15 @@ class MemoryGraphSettings(BaseSettings):
     )
 
     workspace_path: str = Field(
-        default_factory=lambda: str(resolve_workspace_path()),
-        description="Validated workspace root for repo-scoped memory",
+        default_factory=lambda: str(_WORKSPACE_PATH),
+        description="Active workspace root for repo-scoped memory (file-scanning root)",
     )
-    db_path: str = Field(default_factory=_resolve_default_db, description="Path to DuckDB file")
+    db_path: str = Field(
+        default_factory=lambda: str(_DB_DIR / "memory.duckdb"),
+        description="Path to DuckDB file",
+    )
     lock_path: str = Field(
-        default_factory=lambda: str(resolve_workspace_path() / ".memory-graph" / "server.lock"),
+        default_factory=lambda: str(_DB_DIR / "server.lock"),
         description="Path to workspace-scoped server lock file",
     )
     max_entries: int = Field(default=10_000, description="Max collective memory entries (LRU)")
