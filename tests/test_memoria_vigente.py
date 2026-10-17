@@ -13,6 +13,10 @@ Each class pins one defect measured on a real 625-node store (FashionAI repo, 20
       0.80) and only 10 SUPERSEDES edges existed; a Solution that cites the same
       files as an open Problem and talks about it now SOLVES it, and recall marks
       the problem resolved_by and ranks the fix first.
+  T4  compact that is compact: compact=True still returned properties, a
+      "tldr_32" that was the title plus the first sentence and a "brief_96" that
+      repeated the title again — thousands of tokens for 5 hits. Compact nodes
+      now carry only what a reader acts on, and summaries never restate the title.
 
 Each test runs in its own temp workspace with freshly reloaded modules so the
 workspace-scoped DuckDB store is isolated (same pattern as test_storm_features).
@@ -302,6 +306,59 @@ class ProblemSolutionTests(WorkspaceTestCase):
         self.mods["knowledge_graph"].kg_add_edge(sol["node_id"], prob["node_id"], "SOLVES")
         node = self.mods["knowledge_graph"].kg_resolve(prob["canonical_id"])
         self.assertEqual(node.get("resolved_by"), [sol["canonical_id"]])
+
+
+# ── T4: compact recall is actually compact, summaries never restate the title ──
+
+import json  # noqa: E402
+
+_COMPACT_NODE_KEYS = {"node_id", "canonical_id", "node_type", "label", "status",
+                      "semantic_score", "rank_score", "tldr", "freshness", "resolved_by"}
+_LONG = ("Retry DuckDB writes on lock errors with exponential backoff and jitter",
+         "Wrap every DuckDB write in a retry decorator. " + " ".join(
+             f"Step {i}: back off longer and log the transient lock error before trying again." for i in range(25)))
+
+
+class CompactTests(WorkspaceTestCase):
+    def test_compact_node_has_only_actionable_keys(self) -> None:
+        self._record(*_LONG, related_files=["src/db.py"])
+        res = self.mods["unified"].recall("DuckDB lock retry backoff", min_score=0.0, compact=True)
+        self.assertTrue(res["kg"]["nodes"])
+        for n in res["kg"]["nodes"]:
+            self.assertLessEqual(set(n), _COMPACT_NODE_KEYS, f"extra keys: {set(n) - _COMPACT_NODE_KEYS}")
+            self.assertIn("tldr", n)
+
+    def test_compact_tldr_is_short_and_does_not_restate_title(self) -> None:
+        rec = self._record(*_LONG)
+        res = self.mods["unified"].recall("DuckDB lock retry backoff", min_score=0.0, compact=True)
+        n = next(x for x in res["kg"]["nodes"] if x["canonical_id"] == rec["canonical_id"])
+        self.assertLessEqual(len(n["tldr"].split()), 32)
+        self.assertFalse(n["tldr"].startswith(n["label"]), "tldr repeats the title")
+
+    def test_compact_tldr_strips_title_from_legacy_stored_summaries(self) -> None:
+        rec = self._record(*_LONG)
+        with self.mods["db"].get_connection() as conn:  # a <=0.5.1 node: tldr = "Title: first sentence"
+            conn.execute("UPDATE kg_nodes SET tldr_32 = ? WHERE canonical_id = ?",
+                         [f"{_LONG[0]}: Wrap every DuckDB write in a retry decorator.", rec["canonical_id"]])
+        res = self.mods["unified"].recall("DuckDB lock retry backoff", min_score=0.0, compact=True)
+        n = next(x for x in res["kg"]["nodes"] if x["canonical_id"] == rec["canonical_id"])
+        self.assertEqual(n["tldr"], "Wrap every DuckDB write in a retry decorator.")
+
+    def test_compact_is_at_most_a_third_of_normal(self) -> None:
+        for i in range(3):
+            self._record(f"{_LONG[0]} variant {i}", _LONG[1], related_files=["src/db.py"])
+        u = self.mods["unified"]
+        normal = len(json.dumps(u.recall("DuckDB lock retry backoff", min_score=0.0, top_k=5), default=str))
+        compact = len(json.dumps(u.recall("DuckDB lock retry backoff", min_score=0.0, top_k=5, compact=True),
+                                 default=str))
+        self.assertLessEqual(compact, normal / 3, f"compact {compact} vs normal {normal}")
+
+    def test_new_summaries_do_not_start_with_title(self) -> None:
+        rec = self._record(*_LONG)
+        node = self.mods["knowledge_graph"].kg_resolve(rec["canonical_id"])
+        self.assertFalse(node["tldr_32"].startswith(_LONG[0]))
+        self.assertFalse(node["brief_96"].startswith(_LONG[0]))
+        self.assertLessEqual(len(node["tldr_32"].split()), 32)
 
 
 if __name__ == "__main__":
