@@ -17,6 +17,11 @@ Each class pins one defect measured on a real 625-node store (FashionAI repo, 20
       "tldr_32" that was the title plus the first sentence and a "brief_96" that
       repeated the title again — thousands of tokens for 5 hits. Compact nodes
       now carry only what a reader acts on, and summaries never restate the title.
+  T5  wiki that follows the repo: 25 of 53 directory pages described folders
+      that no longer existed, a 'test' page lived in production, and bootstrap
+      walked git-ignored folders and nested worktrees. wiki_lint reports stale
+      directory pages, wiki_prune archives them (reversible), and bootstrap
+      respects .gitignore, skips worktrees and prunes what disappeared.
 
 Each test runs in its own temp workspace with freshly reloaded modules so the
 workspace-scoped DuckDB store is isolated (same pattern as test_storm_features).
@@ -365,6 +370,69 @@ class CompactTests(WorkspaceTestCase):
         self.assertFalse(node["tldr_32"].startswith(_LONG[0]))
         self.assertFalse(node["brief_96"].startswith(_LONG[0]))
         self.assertLessEqual(len(node["tldr_32"].split()), 32)
+
+
+# ── T5: the wiki follows the repo (lint, prune, bootstrap respects git) ────────
+
+
+class WikiPruneTests(WorkspaceTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        shutil.rmtree(self.workspace / ".git")
+        _git(self.workspace, "init", "-q")
+        for d in ("src/core", "src/old", "temp/cache"):
+            (self.workspace / d).mkdir(parents=True)
+            (self.workspace / d / "mod.py").write_text('"""Module docs."""\nx = 1\n')
+        (self.workspace / ".gitignore").write_text("temp/\n")
+        wt = self.workspace / ".claude" / "worktrees" / "wt1" / "src"
+        wt.mkdir(parents=True)
+        (wt / "copy.py").write_text('"""Copy."""\n')
+        (wt.parent / ".git").write_text("gitdir: /elsewhere\n")  # a git worktree marker FILE
+
+    def _pages(self) -> dict[str, str]:
+        with self.mods["db"].get_connection() as conn:
+            return dict(conn.execute("SELECT canonical_id, status FROM wiki_pages").fetchall())
+
+    def test_bootstrap_skips_gitignored_dirs_and_worktrees(self) -> None:
+        self.mods["wiki"].wiki_bootstrap()
+        pages = self._pages()
+        self.assertIn("workspace.dir-src-core", pages)
+        self.assertFalse([c for c in pages if c.startswith("workspace.dir-temp")], "git-ignored dir got a page")
+        self.assertFalse([c for c in pages if "worktrees" in c], "nested worktree got a page")
+
+    def test_lint_reports_directory_pages_whose_dir_is_gone(self) -> None:
+        self.mods["wiki"].wiki_bootstrap()
+        shutil.rmtree(self.workspace / "src" / "old")
+        lint = self.mods["wiki"].wiki_lint()
+        self.assertEqual([p["canonical_id"] for p in lint["stale_directory_pages"]], ["workspace.dir-src-old"])
+
+    def test_prune_dry_run_then_apply_archives_stale_and_junk(self) -> None:
+        w = self.mods["wiki"]
+        w.wiki_bootstrap()
+        w.wiki_ingest(title="test page", body="scratch", canonical_id="test.scratch")
+        shutil.rmtree(self.workspace / "src" / "old")
+
+        preview = w.wiki_prune(dry_run=True)
+        self.assertEqual(sorted(preview["would_archive"]), ["test.scratch", "workspace.dir-src-old"])
+        self.assertEqual(self._pages()["workspace.dir-src-old"], "active", "dry_run must not change anything")
+
+        done = w.wiki_prune(dry_run=False)
+        self.assertEqual(done["archived"], 2)
+        pages = self._pages()
+        self.assertEqual(pages["workspace.dir-src-old"], "archived")
+        self.assertEqual(pages["test.scratch"], "archived")
+        self.assertEqual(pages["workspace.dir-src-core"], "active", "a live dir must stay")
+        self.assertIn("error", w.wiki_get("workspace.dir-src-old"))
+        hits = self.mods["unified"].recall("Module docs", scope="wiki", min_score=0.0)["wiki"]
+        self.assertNotIn("workspace.dir-src-old", [h["canonical_id"] for h in hits])
+
+    def test_bootstrap_force_prunes_dirs_that_disappeared(self) -> None:
+        w = self.mods["wiki"]
+        w.wiki_bootstrap()
+        shutil.rmtree(self.workspace / "src" / "old")
+        out = w.wiki_bootstrap(force=True)
+        self.assertEqual(self._pages()["workspace.dir-src-old"], "archived")
+        self.assertIn("workspace.dir-src-old", out.get("archived", []))
 
 
 if __name__ == "__main__":
