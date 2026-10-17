@@ -293,11 +293,8 @@ def _recall_kg(
                 seed_nodes.append(node)
                 seed_ids.add(node["node_id"])
 
-        for nid in seed_ids:
-            conn.execute(
-                "UPDATE kg_nodes SET reuse_count = COALESCE(reuse_count, 0) + 1 WHERE node_id = ?",
-                [nid],
-            )
+        # recall is a READ: returning a node is not using it. Reuse is counted only
+        # when the caller opens a result (kg_resolve / wiki_get → intelligence.register_use).
 
         expanded_nodes, expanded_edges = _bfs_expand(conn, seed_ids, hops)
 

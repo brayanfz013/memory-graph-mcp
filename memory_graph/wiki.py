@@ -243,6 +243,25 @@ def wiki_get(
     outline_only: bool = False,
     section: str | None = None,
 ) -> dict[str, Any]:
+    """Fetch a wiki page by canonical_id or exact title (see _wiki_get_page).
+
+    Opening a page is a real use of its KG node: it counts toward reuse and may
+    promote the node (intelligence.register_use). A miss or an unknown section
+    is not a use.
+    """
+    page = _wiki_get_page(canonical_id_or_title, outline_only=outline_only, section=section)
+    cid = page.get("canonical_id")
+    if cid and "error" not in page:
+        from .intelligence import register_use  # lazy: intelligence imports wiki
+        register_use(cid)
+    return page
+
+
+def _wiki_get_page(
+    canonical_id_or_title: str,
+    outline_only: bool = False,
+    section: str | None = None,
+) -> dict[str, Any]:
     """Fetch a wiki page by canonical_id or exact title.
 
     By default returns the full body. Two token-saving modes:

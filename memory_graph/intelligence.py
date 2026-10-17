@@ -178,6 +178,13 @@ def memory_consolidate(
         else:
             result["status"] = "preview"
 
+    # Catch-up promotion: drafts that already met the reuse threshold (e.g. stores
+    # written by <=0.5.1, where promotion only ran inside record_finding).
+    pending = _promotable_drafts()
+    result["would_promote"] = len(pending)
+    if not dry_run:
+        result["promoted"] = sum(1 for cid in pending if _promote_and_crystallize(cid))
+
     # Rebuild the topic mind-map after a real cleanup so clusters reflect the
     # current graph (separate connection — build_topics manages its own).
     if not dry_run:
@@ -515,6 +522,44 @@ def _auto_infer_edges(
     if edges_created:
         logger.info("Auto-inferred %d RELATED_TO edges from %s", len(edges_created), node_id)
     return edges_created
+
+
+def register_use(canonical_id: str) -> dict[str, Any] | None:
+    """Count one real use of a node and promote it the moment it earns it.
+
+    A use is the caller OPENING a result (kg_resolve / wiki_get), never merely
+    seeing it in a recall list. Promotion is evaluated here — where reuse grows —
+    and a promotion crystallizes the wiki page, so knowledge reused across
+    sessions reaches the wiki instead of freezing as a draft.
+    """
+    if not canonical_id:
+        return None
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE kg_nodes SET reuse_count = COALESCE(reuse_count, 0) + 1 WHERE canonical_id = ?",
+            [canonical_id],
+        )
+    return _promote_and_crystallize(canonical_id)
+
+
+def _promote_and_crystallize(canonical_id: str) -> dict[str, Any] | None:
+    promotion = maybe_promote(canonical_id)
+    if promotion:
+        try:
+            from . import wiki as wiki_mod
+            wiki_mod.wiki_crystallize(canonical_id)
+        except Exception as exc:  # noqa: BLE001 — crystallize must never break a read
+            logger.warning("Auto-crystallize failed for %s: %s", canonical_id, exc)
+    return promotion
+
+
+def _promotable_drafts() -> list[str]:
+    with get_connection() as conn:
+        return [r[0] for r in conn.execute(
+            "SELECT canonical_id FROM kg_nodes WHERE status = 'draft' "
+            "AND COALESCE(reuse_count, 0) >= ? AND canonical_id IS NOT NULL",
+            [PROMOTION_REUSE_THRESHOLD],
+        ).fetchall()]
 
 
 @with_retry()

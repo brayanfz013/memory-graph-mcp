@@ -456,4 +456,9 @@ def kg_resolve(canonical_id: str) -> dict[str, Any]:
         ).fetchone()
         if not row:
             return {"error": f"No node with canonical_id: {canonical_id}"}
-        return _row_to_node(row)
+        node = _row_to_node(row)
+    from .intelligence import register_use  # lazy: intelligence imports this module
+    if register_use(canonical_id):
+        node["status"] = "canonical"
+    node["reuse_count"] = (node.get("reuse_count") or 0) + 1
+    return node
