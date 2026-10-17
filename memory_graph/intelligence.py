@@ -423,6 +423,8 @@ def memory_record_finding(
     )
 
     auto_edges = _auto_infer_edges(node_id, title, content)
+    solves = (_auto_solves(node_id, title, content, related_files or [])
+              if node_type == "Solution" else [])
 
     promotion = maybe_promote(canonical_id)
 
@@ -443,6 +445,7 @@ def memory_record_finding(
         "status": kg_result.get("status", "draft"),
         "tldr_32": tldr_32,
         "auto_edges": auto_edges,
+        "solves": solves,
         "sources": sources or [],
         "grounded": bool(sources),
     }
@@ -526,6 +529,55 @@ def _auto_infer_edges(
     if edges_created:
         logger.info("Auto-inferred %d RELATED_TO edges from %s", len(edges_created), node_id)
     return edges_created
+
+
+@with_retry()
+def _auto_solves(
+    node_id: str | None, title: str, content: str, files: list[str],
+) -> list[dict[str, Any]]:
+    """SOLVES edges from a new Solution to the open Problems it fixes.
+
+    A Problem is considered fixed by this Solution only when BOTH hold:
+      * they cite at least one common file (same code), and
+      * their texts are about the same subject (cosine >= AUTO_EDGE_MIN_SCORE).
+    Either signal alone is too weak: a file is touched by many unrelated issues,
+    and a similar text may describe a different occurrence.
+    """
+    from .embeddings import embed_query
+
+    if not node_id or not files:
+        return []
+    wanted = set(files)
+    qvec = embed_query(f"{title}\n{content}")
+    dim = len(qvec)
+    created: list[dict[str, Any]] = []
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT n.node_id, n.canonical_id, n.properties_json,
+                   array_cosine_similarity(e.vector, ?::FLOAT[{dim}]) AS score
+            FROM kg_nodes n
+            JOIN memory_embeddings e
+              ON e.id = json_extract_string(n.properties_json, '$.memory_id')
+            WHERE n.node_type = 'Problem' AND COALESCE(n.status, 'draft') != 'superseded'
+              AND n.node_id != ?
+            """,
+            [qvec, node_id],
+        ).fetchall()
+        for pid, pcid, props_json, score in rows:
+            pfiles = set((json.loads(props_json or "{}").get("files")) or [])
+            if not (pfiles & wanted) or float(score) < AUTO_EDGE_MIN_SCORE:
+                continue
+            conn.execute(
+                """INSERT INTO kg_edges (from_id, to_id, rel_type, weight)
+                   VALUES (?, ?, 'SOLVES', ?)
+                   ON CONFLICT (from_id, to_id, rel_type) DO UPDATE SET weight = ?""",
+                [node_id, pid, float(score), float(score)],
+            )
+            created.append({"node_id": pid, "canonical_id": pcid, "score": round(float(score), 4)})
+    if created:
+        logger.info("Auto-SOLVES: %s resolves %d problem(s)", node_id, len(created))
+    return created
 
 
 def register_use(canonical_id: str) -> dict[str, Any] | None:

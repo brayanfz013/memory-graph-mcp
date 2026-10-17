@@ -272,6 +272,19 @@ class ProblemSolutionTests(WorkspaceTestCase):
         self._record(*_SOLUTION, finding_type="solution", related_files=["src/db.py"])
         self.assertEqual(self._edges("SOLVES"), [], "same file is not enough: it must be the same subject")
 
+    def test_solution_never_solves_another_solution(self) -> None:
+        self._record("Fix: back off DuckDB writes when the file is locked",
+                     "Retry DuckDB writes with exponential backoff on lock errors.",
+                     finding_type="solution", related_files=["src/db.py"])
+        self._record(*_SOLUTION, finding_type="solution", related_files=["src/db.py"])
+        self.assertEqual(self._edges("SOLVES"), [], "only Problems can be solved")
+
+    def test_superseded_problem_is_not_solved_again(self) -> None:
+        prob = self._record(*_PROBLEM, finding_type="problem", related_files=["src/db.py"])
+        self.mods["knowledge_graph"].kg_promote(prob["node_id"], "superseded")
+        self._record(*_SOLUTION, finding_type="solution", related_files=["src/db.py"])
+        self.assertEqual(self._edges("SOLVES"), [])
+
     def test_recall_marks_problem_resolved_and_ranks_fix_first(self) -> None:
         prob = self._record(*_PROBLEM, finding_type="problem", related_files=["src/db.py"])
         sol = self._record(*_SOLUTION, finding_type="solution", related_files=["src/db.py"])

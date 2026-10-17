@@ -17,7 +17,13 @@ from typing import Any
 from .db import get_connection
 from .embeddings import embed_query
 from .freshness import annotate as annotate_freshness
-from .knowledge_graph import VALID_NODE_TYPES, _bfs_expand, _row_to_node
+from .knowledge_graph import (
+    RESOLVED_PENALTY,
+    VALID_NODE_TYPES,
+    _bfs_expand,
+    _row_to_node,
+    resolved_by,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -307,6 +313,11 @@ def _recall_kg(
 
         for n in all_nodes.values():
             annotate_freshness(n)
+        fixes = resolved_by(conn, list(all_nodes))
+        for nid, cids in fixes.items():
+            n = all_nodes[nid]
+            n["resolved_by"] = cids
+            n["rank_score"] = round(n.get("rank_score", 0.0) * RESOLVED_PENALTY, 4)
         ranked = sorted(
             all_nodes.values(),
             key=lambda n: (n.get("rank_score", 0.0), n["pagerank_score"]),
