@@ -378,6 +378,10 @@ def memory_record_finding(
         metadata["agent"] = source_agent
     if sources:
         metadata["sources"] = sources
+    from .freshness import head_commit
+    commit = head_commit()
+    if commit:
+        metadata["commit"] = commit  # lets recall tell whether cited code changed since
 
     type_map = {
         "solution": "Solution",

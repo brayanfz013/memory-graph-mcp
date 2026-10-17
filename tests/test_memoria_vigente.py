@@ -206,9 +206,21 @@ class FreshnessTests(WorkspaceTestCase):
         rec = self._record(related_files=["src/gone.py"])
         node = self._recalled(rec["canonical_id"])
         self.assertLess(node["rank_score"], node["semantic_score"])
-        nodes = self.mods["unified"].recall("DuckDB lock retry backoff", min_score=0.0)["kg"]["nodes"]
-        ranks = [n.get("rank_score", n.get("semantic_score", 0.0)) for n in nodes]
-        self.assertEqual(ranks, sorted(ranks, reverse=True), "results must be ordered by rank_score")
+
+    def test_fresh_node_outranks_closer_but_stale_node(self) -> None:
+        stale = self._record(title="DuckDB lock retry backoff", content="DuckDB lock retry backoff.",
+                             related_files=["src/gone.py"])
+        fresh = self._record(title="Retry DuckDB writes on lock errors with backoff",
+                             content="when the DuckDB file is locked, retry the write with exponential backoff.",
+                             related_files=["src/here.py"])
+        nodes = self.mods["unified"].recall("DuckDB lock retry backoff", min_score=0.0, hops=0)["kg"]["nodes"]
+        by_cid = {n["canonical_id"]: n for n in nodes}
+        s, f = by_cid[stale["canonical_id"]], by_cid[fresh["canonical_id"]]
+        self.assertGreater(s["semantic_score"], f["semantic_score"],
+                           "precondition: the stale node is the closer textual match")
+        order = [n["canonical_id"] for n in nodes]
+        self.assertLess(order.index(fresh["canonical_id"]), order.index(stale["canonical_id"]),
+                        "freshness must outrank a slightly closer but stale match")
 
     def test_kg_resolve_reports_freshness(self) -> None:
         rec = self._record(related_files=["src/gone.py"])

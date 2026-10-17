@@ -16,6 +16,7 @@ from typing import Any
 
 from .db import get_connection
 from .embeddings import embed_query
+from .freshness import annotate as annotate_freshness
 from .knowledge_graph import VALID_NODE_TYPES, _bfs_expand, _row_to_node
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,7 @@ def recall(
             if cid:
                 canonicals_seen[cid] = max(
                     canonicals_seen.get(cid, 0.0),
-                    n.get("semantic_score", 0.0),
+                    n.get("rank_score", n.get("semantic_score", 0.0)),
                 )
 
     if scope in {"wiki", "all"}:
@@ -304,9 +305,11 @@ def _recall_kg(
             if n["node_id"] not in all_nodes:
                 all_nodes[n["node_id"]] = n
 
+        for n in all_nodes.values():
+            annotate_freshness(n)
         ranked = sorted(
             all_nodes.values(),
-            key=lambda n: (n.get("semantic_score", 0.0), n["pagerank_score"]),
+            key=lambda n: (n.get("rank_score", 0.0), n["pagerank_score"]),
             reverse=True,
         )[:top_k]
 

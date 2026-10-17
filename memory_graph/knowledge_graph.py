@@ -461,4 +461,6 @@ def kg_resolve(canonical_id: str) -> dict[str, Any]:
     if register_use(canonical_id):
         node["status"] = "canonical"
     node["reuse_count"] = (node.get("reuse_count") or 0) + 1
+    from .freshness import file_freshness
+    node["freshness"] = file_freshness(node.get("properties") or {})
     return node
