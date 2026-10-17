@@ -35,17 +35,22 @@ def _truncate_words(text: str, max_words: int) -> str:
 
 
 def _generate_tldr(title: str, content: str) -> str:
-    """Generate ~32-word TLDR from title + first sentence of content."""
-    first_sentence = content.split(". ")[0] if ". " in content else content
-    combined = f"{title}: {first_sentence}."
-    return _truncate_words(combined, 32)
+    """<=32-word gist of the CONTENT (first sentence). The title travels separately
+    as the node label, so restating it here only burns tokens."""
+    body = (content or "").strip()
+    if not body:
+        return _truncate_words(title, 32)
+    first_sentence = body.split(". ")[0].rstrip(".") + "."
+    return _truncate_words(first_sentence, 32)
 
 
 def _generate_brief(title: str, content: str) -> str:
-    """Generate ~96-word brief from title + first paragraph of content."""
-    first_para = content.split("\n\n")[0] if "\n\n" in content else content
-    combined = f"{title}: {first_para}"
-    return _truncate_words(combined, 96)
+    """<=96-word brief of the CONTENT (first paragraph), without restating the title."""
+    body = (content or "").strip()
+    if not body:
+        return _truncate_words(title, 96)
+    first_para = body.split("\n\n")[0]
+    return _truncate_words(first_para, 96)
 
 
 def memory_report() -> dict[str, Any]:

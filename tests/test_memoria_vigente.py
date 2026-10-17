@@ -353,6 +353,12 @@ class CompactTests(WorkspaceTestCase):
                                  default=str))
         self.assertLessEqual(compact, normal / 3, f"compact {compact} vs normal {normal}")
 
+    def test_long_first_sentence_is_cut_to_32_words(self) -> None:
+        long_sentence = " ".join(f"word{i}" for i in range(60)) + ". Second sentence."
+        rec = self._record("Long first sentence", long_sentence)
+        node = self.mods["knowledge_graph"].kg_resolve(rec["canonical_id"])
+        self.assertLessEqual(len(node["tldr_32"].split()), 32)
+
     def test_new_summaries_do_not_start_with_title(self) -> None:
         rec = self._record(*_LONG)
         node = self.mods["knowledge_graph"].kg_resolve(rec["canonical_id"])

@@ -162,26 +162,65 @@ def _group_by_topic(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(buckets.values(), key=lambda b: len(b["members"]), reverse=True)
 
 
+_MEMORY_SNIPPET_CHARS = 240
+
+
+def _strip_title(text: str | None, label: str | None) -> str:
+    """Drop a leading 'Title: ' that <=0.5.1 baked into stored summaries."""
+    text = (text or "").strip()
+    if label and text.startswith(label):
+        text = text[len(label):].lstrip(" :—-")
+    return text
+
+
+def _compact_node(n: dict[str, Any]) -> dict[str, Any]:
+    """Only what a reader acts on: identity, scores, a short gist, and flags."""
+    out: dict[str, Any] = {
+        "node_id": n.get("node_id"),
+        "canonical_id": n.get("canonical_id"),
+        "node_type": n.get("node_type"),
+        "label": n.get("label"),
+        "status": n.get("status"),
+        "semantic_score": n.get("semantic_score"),
+        "rank_score": n.get("rank_score", n.get("semantic_score")),
+        "tldr": _strip_title(n.get("tldr_32"), n.get("label")),
+    }
+    fr = n.get("freshness")
+    if fr and fr.get("stale"):
+        out["freshness"] = fr
+    if n.get("resolved_by"):
+        out["resolved_by"] = n["resolved_by"]
+    return out
+
+
 def _apply_compaction(out: dict[str, Any]) -> None:
-    """Trim redundant payload in-place to cut token cost (see recall(compact=…))."""
-    kg_nodes = out.get("kg", {}).get("nodes", []) if isinstance(out.get("kg"), dict) else []
+    """Trim the payload in-place to cut token cost (see recall(compact=…)).
 
-    # memory_ids already represented by a returned KG node → drop the dup memory
-    represented_mem_ids: set[str] = set()
-    for n in kg_nodes:
-        props = n.get("properties") or {}
-        mem_id = props.get("memory_id")
-        if mem_id:
-            represented_mem_ids.add(mem_id)
-        # strip the heavy raw content; tldr_32 / brief_96 carry the gist
-        if isinstance(props, dict) and "content" in props:
-            slim = {k: v for k, v in props.items() if k != "content"}
-            n["properties"] = slim
+    KG nodes keep only actionable keys (no properties, no brief, no title restated
+    in the gist); memories already represented by a returned node are dropped and
+    the rest are clipped; wiki snippets are clipped.
+    """
+    kg = out.get("kg") if isinstance(out.get("kg"), dict) else {}
+    kg_nodes = kg.get("nodes", []) if kg else []
 
-    if "memories" in out and represented_mem_ids:
-        out["memories"] = [
-            m for m in out["memories"] if m.get("id") not in represented_mem_ids
-        ]
+    represented_mem_ids = {
+        (n.get("properties") or {}).get("memory_id") for n in kg_nodes
+    } - {None}
+    if kg:
+        kg["nodes"] = [_compact_node(n) for n in kg_nodes]
+
+    if "memories" in out:
+        kept = []
+        for m in out["memories"]:
+            if m.get("id") in represented_mem_ids:
+                continue
+            m = dict(m)
+            m.pop("metadata", None)
+            c = m.get("content") or ""
+            if len(c) > _MEMORY_SNIPPET_CHARS:
+                m["content"] = c[:_MEMORY_SNIPPET_CHARS] + "…"
+            kept.append(m)
+        out["memories"] = kept
 
     for w in out.get("wiki", []) or []:
         snip = w.get("snippet") or ""
