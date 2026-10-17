@@ -9,6 +9,10 @@ Each class pins one defect measured on a real 625-node store (FashionAI repo, 20
   T2  freshness: 797 of 3,220 files cited by nodes (25%) no longer existed and
       nothing told the reader; a node now carries the commit it was recorded at,
       and recall/kg_resolve report which cited files are missing or changed since.
+  T3  history vs present: a fixed Problem ranked ABOVE its own Solution (0.83 vs
+      0.80) and only 10 SUPERSEDES edges existed; a Solution that cites the same
+      files as an open Problem and talks about it now SOLVES it, and recall marks
+      the problem resolved_by and ranks the fix first.
 
 Each test runs in its own temp workspace with freshly reloaded modules so the
 workspace-scoped DuckDB store is isolated (same pattern as test_storm_features).
@@ -234,6 +238,57 @@ class FreshnessTests(WorkspaceTestCase):
         fr = self._recalled(rec["canonical_id"])["freshness"]
         self.assertEqual((fr["missing"], fr["changed"]), ([], []))
         self.assertIsNone(self.mods["knowledge_graph"].kg_resolve(rec["canonical_id"])["properties"].get("commit"))
+
+
+# ── T3: a recorded fix resolves its problem, and recall shows the present first ─
+
+
+_PROBLEM = ("Problem: DuckDB writes fail with lock errors under concurrency",
+            "Concurrent processes writing the DuckDB file fail with transient lock errors.")
+_SOLUTION = ("Fix: retry DuckDB writes on lock errors with exponential backoff",
+             "Wrap DuckDB writes in a retry decorator with exponential backoff so lock errors recover.")
+
+
+class ProblemSolutionTests(WorkspaceTestCase):
+    def _edges(self, rel: str) -> list[tuple[str, str]]:
+        with self.mods["db"].get_connection() as conn:
+            return conn.execute("SELECT from_id, to_id FROM kg_edges WHERE rel_type = ?", [rel]).fetchall()
+
+    def test_solution_citing_problem_files_solves_it(self) -> None:
+        prob = self._record(*_PROBLEM, finding_type="problem", related_files=["src/db.py"])
+        sol = self._record(*_SOLUTION, finding_type="solution", related_files=["src/db.py", "tests/t.py"])
+        self.assertIn((sol["node_id"], prob["node_id"]), self._edges("SOLVES"))
+        self.assertEqual([s["canonical_id"] for s in sol.get("solves", [])], [prob["canonical_id"]])
+
+    def test_no_shared_file_no_solves(self) -> None:
+        self._record(*_PROBLEM, finding_type="problem", related_files=["src/db.py"])
+        sol = self._record(*_SOLUTION, finding_type="solution", related_files=["src/other.py"])
+        self.assertEqual(self._edges("SOLVES"), [])
+        self.assertEqual(sol.get("solves", []), [])
+
+    def test_shared_file_but_unrelated_text_no_solves(self) -> None:
+        self._record("Problem: pasta overcooked", "Boiled the pasta too long and it went soft.",
+                     finding_type="problem", related_files=["src/db.py"])
+        self._record(*_SOLUTION, finding_type="solution", related_files=["src/db.py"])
+        self.assertEqual(self._edges("SOLVES"), [], "same file is not enough: it must be the same subject")
+
+    def test_recall_marks_problem_resolved_and_ranks_fix_first(self) -> None:
+        prob = self._record(*_PROBLEM, finding_type="problem", related_files=["src/db.py"])
+        sol = self._record(*_SOLUTION, finding_type="solution", related_files=["src/db.py"])
+        nodes = self.mods["unified"].recall(_PROBLEM[0], min_score=0.0, hops=0)["kg"]["nodes"]
+        by = {n["canonical_id"]: n for n in nodes}
+        p, s = by[prob["canonical_id"]], by[sol["canonical_id"]]
+        self.assertGreater(p["semantic_score"], s["semantic_score"], "precondition: query names the problem")
+        self.assertEqual(p.get("resolved_by"), [sol["canonical_id"]])
+        order = [n["canonical_id"] for n in nodes]
+        self.assertLess(order.index(sol["canonical_id"]), order.index(prob["canonical_id"]))
+
+    def test_manual_solves_edge_also_resolves(self) -> None:
+        prob = self._record(*_PROBLEM, finding_type="problem", related_files=["src/a.py"])
+        sol = self._record(*_SOLUTION, finding_type="solution", related_files=["src/b.py"])
+        self.mods["knowledge_graph"].kg_add_edge(sol["node_id"], prob["node_id"], "SOLVES")
+        node = self.mods["knowledge_graph"].kg_resolve(prob["canonical_id"])
+        self.assertEqual(node.get("resolved_by"), [sol["canonical_id"]])
 
 
 if __name__ == "__main__":
