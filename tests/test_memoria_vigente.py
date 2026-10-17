@@ -6,6 +6,9 @@ Each class pins one defect measured on a real 625-node store (FashionAI repo, 20
       *returned* (a nonsense query "reused" 5 nodes), and promotion was only
       evaluated inside record_finding for the node being recorded, so 190 drafts
       with reuse >= 3 were never promoted and the wiki froze for 3.5 months.
+  T2  freshness: 797 of 3,220 files cited by nodes (25%) no longer existed and
+      nothing told the reader; a node now carries the commit it was recorded at,
+      and recall/kg_resolve report which cited files are missing or changed since.
 
 Each test runs in its own temp workspace with freshly reloaded modules so the
 workspace-scoped DuckDB store is isolated (same pattern as test_storm_features).
@@ -14,6 +17,7 @@ workspace-scoped DuckDB store is isolated (same pattern as test_storm_features).
 from __future__ import annotations
 
 import importlib
+import subprocess
 import os
 import shutil
 import sys
@@ -146,6 +150,78 @@ class ReuseAndPromotionTests(WorkspaceTestCase):
         self.assertEqual(done["promoted"], 1)
         self.assertEqual(self._node(cid)["status"], "canonical")
         self.assertNotIn("error", self.mods["wiki"].wiki_get(cid), "backfill must crystallize too")
+
+
+# ── T2: freshness against the code (missing / changed since recorded) ─────────
+
+
+def _git(ws: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(ws), *args], check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+
+class FreshnessTests(WorkspaceTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        shutil.rmtree(self.workspace / ".git")
+        _git(self.workspace, "init", "-q")
+        _git(self.workspace, "config", "user.email", "t@t")
+        _git(self.workspace, "config", "user.name", "t")
+        (self.workspace / "src").mkdir()
+        (self.workspace / "src" / "here.py").write_text("x = 1\n")
+        _git(self.workspace, "add", "-A")
+        _git(self.workspace, "commit", "-q", "-m", "init")
+
+    def _recalled(self, cid: str, query: str = "DuckDB lock retry backoff") -> dict[str, Any]:
+        nodes = self.mods["unified"].recall(query, min_score=0.0, hops=0)["kg"]["nodes"]
+        match = [n for n in nodes if n.get("canonical_id") == cid]
+        self.assertTrue(match, "fixture node must be recalled")
+        return match[0]
+
+    def test_record_stores_head_commit(self) -> None:
+        rec = self._record(related_files=["src/here.py"])
+        node = self.mods["knowledge_graph"].kg_resolve(rec["canonical_id"])
+        self.assertEqual(node["properties"].get("commit"), _git(self.workspace, "rev-parse", "HEAD"))
+
+    def test_recall_flags_missing_cited_file(self) -> None:
+        rec = self._record(related_files=["src/here.py", "src/gone.py"])
+        node = self._recalled(rec["canonical_id"])
+        self.assertEqual(node["freshness"]["missing"], ["src/gone.py"])
+        self.assertTrue(node["freshness"]["stale"])
+
+    def test_recall_fresh_node_is_not_stale(self) -> None:
+        rec = self._record(related_files=["src/here.py"])
+        fr = self._recalled(rec["canonical_id"])["freshness"]
+        self.assertEqual((fr["missing"], fr["changed"], fr["stale"]), ([], [], False))
+
+    def test_recall_flags_file_changed_since_recorded(self) -> None:
+        rec = self._record(related_files=["src/here.py"])
+        (self.workspace / "src" / "here.py").write_text("x = 2\n")
+        _git(self.workspace, "commit", "-q", "-am", "change")
+        fr = self._recalled(rec["canonical_id"])["freshness"]
+        self.assertEqual(fr["changed"], ["src/here.py"])
+        self.assertTrue(fr["stale"])
+
+    def test_stale_node_ranks_below_its_raw_score(self) -> None:
+        rec = self._record(related_files=["src/gone.py"])
+        node = self._recalled(rec["canonical_id"])
+        self.assertLess(node["rank_score"], node["semantic_score"])
+        nodes = self.mods["unified"].recall("DuckDB lock retry backoff", min_score=0.0)["kg"]["nodes"]
+        ranks = [n.get("rank_score", n.get("semantic_score", 0.0)) for n in nodes]
+        self.assertEqual(ranks, sorted(ranks, reverse=True), "results must be ordered by rank_score")
+
+    def test_kg_resolve_reports_freshness(self) -> None:
+        rec = self._record(related_files=["src/gone.py"])
+        node = self.mods["knowledge_graph"].kg_resolve(rec["canonical_id"])
+        self.assertEqual(node["freshness"]["missing"], ["src/gone.py"])
+
+    def test_no_git_workspace_degrades_gracefully(self) -> None:
+        shutil.rmtree(self.workspace / ".git")
+        (self.workspace / ".git").mkdir()  # marker only, not a repo
+        rec = self._record(related_files=["src/here.py"])
+        fr = self._recalled(rec["canonical_id"])["freshness"]
+        self.assertEqual((fr["missing"], fr["changed"]), ([], []))
+        self.assertIsNone(self.mods["knowledge_graph"].kg_resolve(rec["canonical_id"])["properties"].get("commit"))
 
 
 if __name__ == "__main__":
