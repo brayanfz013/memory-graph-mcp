@@ -164,7 +164,8 @@ For the full usage protocol (what to recall, when to record, how to traverse the
 - `memory_report()` — counts + top influential + wiki lint
 - `memory_consolidate(dry_run)` — purge expired + recompute PageRank
 - `memory_stats()` — table row counts
-- `wiki_bootstrap()` — seed wiki from workspace + canonicals
+- `wiki_bootstrap()` — seed wiki from workspace + canonicals (skips git-ignored folders and nested worktrees)
+- `wiki_prune(dry_run=True)` — archive pages of deleted or git-ignored folders and scratch pages
 
 **Legacy (kept for backward compat):**
 - `memory_recall`, `kg_query`, `kg_influential`
@@ -265,7 +266,9 @@ After migration, `embedding_meta` records a new generation. Next process restart
          └─────────────────┘
 ```
 
-Lifecycle: `draft → canonical → superseded`. Auto-promote at `reuse_count ≥ 3`. Canonical promotion auto-triggers wiki crystallization.
+Lifecycle: `draft → canonical → superseded`. Auto-promote at `reuse_count ≥ 3`, where reuse = opening the node with `kg_resolve`/`wiki_get` (a `recall` hit alone is not a use). Canonical promotion auto-triggers wiki crystallization.
+
+**Present first (v0.6.0).** Every node records the HEAD commit; `recall` reports `freshness` (cited files missing or changed since) and orders by `rank_score`, which down-weights stale knowledge and problems that a recorded fix already `SOLVES`. Below the active model's calibrated floor (`recall_floor` in the registry, or `RECALL_MIN_SCORE`), recall returns nothing and sets `abstained: true`.
 
 ---
 

@@ -11,6 +11,8 @@ import logging
 from collections import defaultdict
 from typing import Any
 
+import duckdb
+
 from .db import get_connection, with_retry
 
 logger = logging.getLogger(__name__)
@@ -35,17 +37,22 @@ def _truncate_words(text: str, max_words: int) -> str:
 
 
 def _generate_tldr(title: str, content: str) -> str:
-    """Generate ~32-word TLDR from title + first sentence of content."""
-    first_sentence = content.split(". ")[0] if ". " in content else content
-    combined = f"{title}: {first_sentence}."
-    return _truncate_words(combined, 32)
+    """<=32-word gist of the CONTENT (first sentence). The title travels separately
+    as the node label, so restating it here only burns tokens."""
+    body = (content or "").strip()
+    if not body:
+        return _truncate_words(title, 32)
+    first_sentence = body.split(". ")[0].rstrip(".") + "."
+    return _truncate_words(first_sentence, 32)
 
 
 def _generate_brief(title: str, content: str) -> str:
-    """Generate ~96-word brief from title + first paragraph of content."""
-    first_para = content.split("\n\n")[0] if "\n\n" in content else content
-    combined = f"{title}: {first_para}"
-    return _truncate_words(combined, 96)
+    """<=96-word brief of the CONTENT (first paragraph), without restating the title."""
+    body = (content or "").strip()
+    if not body:
+        return _truncate_words(title, 96)
+    first_para = body.split("\n\n")[0]
+    return _truncate_words(first_para, 96)
 
 
 def memory_report() -> dict[str, Any]:
@@ -177,6 +184,13 @@ def memory_consolidate(
             logger.info("Consolidation: removed %d entries", result["total"])
         else:
             result["status"] = "preview"
+
+    # Catch-up promotion: drafts that already met the reuse threshold (e.g. stores
+    # written by <=0.5.1, where promotion only ran inside record_finding).
+    pending = _promotable_drafts()
+    result["would_promote"] = len(pending)
+    if not dry_run:
+        result["promoted"] = sum(1 for cid in pending if _promote_and_crystallize(cid))
 
     # Rebuild the topic mind-map after a real cleanup so clusters reflect the
     # current graph (separate connection — build_topics manages its own).
@@ -360,7 +374,8 @@ def memory_record_finding(
 
     Each sub-call opens its own connection via get_connection().
     """
-    from . import knowledge_graph as kg_mod, vector_store as vs_mod
+    from . import knowledge_graph as kg_mod
+    from . import vector_store as vs_mod
 
     metadata: dict[str, Any] = {}
     if related_files:
@@ -371,6 +386,10 @@ def memory_record_finding(
         metadata["agent"] = source_agent
     if sources:
         metadata["sources"] = sources
+    from .freshness import head_commit
+    commit = head_commit()
+    if commit:
+        metadata["commit"] = commit  # lets recall tell whether cited code changed since
 
     type_map = {
         "solution": "Solution",
@@ -412,6 +431,12 @@ def memory_record_finding(
     )
 
     auto_edges = _auto_infer_edges(node_id, title, content)
+    solves: list[dict[str, Any]] = []
+    if node_type == "Solution":
+        try:
+            solves = _auto_solves(node_id, title, content, related_files or [])
+        except (duckdb.Error, OSError) as exc:  # the finding is already persisted
+            logger.warning("Auto-SOLVES skipped for %s: %s", node_id, exc)
 
     promotion = maybe_promote(canonical_id)
 
@@ -432,6 +457,7 @@ def memory_record_finding(
         "status": kg_result.get("status", "draft"),
         "tldr_32": tldr_32,
         "auto_edges": auto_edges,
+        "solves": solves,
         "sources": sources or [],
         "grounded": bool(sources),
     }
@@ -515,6 +541,95 @@ def _auto_infer_edges(
     if edges_created:
         logger.info("Auto-inferred %d RELATED_TO edges from %s", len(edges_created), node_id)
     return edges_created
+
+
+@with_retry()
+def _auto_solves(
+    node_id: str | None, title: str, content: str, files: list[str],
+) -> list[dict[str, Any]]:
+    """SOLVES edges from a new Solution to the open Problems it fixes.
+
+    Scans every non-superseded Problem with a vector (fine at hundreds; past a few
+    thousand, prefilter by cited file before the cosine). A Problem is considered
+    fixed by this Solution only when BOTH hold:
+      * they cite at least one common file (same code), and
+      * their texts are about the same subject (cosine >= AUTO_EDGE_MIN_SCORE).
+    Either signal alone is too weak: a file is touched by many unrelated issues,
+    and a similar text may describe a different occurrence.
+    """
+    from .embeddings import embed_query
+
+    if not node_id or not files:
+        return []
+    wanted = set(files)
+    qvec = embed_query(f"{title}\n{content}")
+    dim = len(qvec)
+    created: list[dict[str, Any]] = []
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT n.node_id, n.canonical_id, n.properties_json,
+                   array_cosine_similarity(e.vector, ?::FLOAT[{dim}]) AS score
+            FROM kg_nodes n
+            JOIN memory_embeddings e
+              ON e.id = json_extract_string(n.properties_json, '$.memory_id')
+            WHERE n.node_type = 'Problem' AND COALESCE(n.status, 'draft') != 'superseded'
+              AND n.node_id != ?
+            """,
+            [qvec, node_id],
+        ).fetchall()
+        for pid, pcid, props_json, score in rows:
+            pfiles = set((json.loads(props_json or "{}").get("files")) or [])
+            if not (pfiles & wanted) or float(score) < AUTO_EDGE_MIN_SCORE:
+                continue
+            conn.execute(
+                """INSERT INTO kg_edges (from_id, to_id, rel_type, weight)
+                   VALUES (?, ?, 'SOLVES', ?)
+                   ON CONFLICT (from_id, to_id, rel_type) DO UPDATE SET weight = ?""",
+                [node_id, pid, float(score), float(score)],
+            )
+            created.append({"node_id": pid, "canonical_id": pcid, "score": round(float(score), 4)})
+    if created:
+        logger.info("Auto-SOLVES: %s resolves %d problem(s)", node_id, len(created))
+    return created
+
+
+def register_use(canonical_id: str) -> dict[str, Any] | None:
+    """Count one real use of a node and promote it the moment it earns it.
+
+    A use is the caller OPENING a result (kg_resolve / wiki_get), never merely
+    seeing it in a recall list. Promotion is evaluated here — where reuse grows —
+    and a promotion crystallizes the wiki page, so knowledge reused across
+    sessions reaches the wiki instead of freezing as a draft.
+    """
+    if not canonical_id:
+        return None
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE kg_nodes SET reuse_count = COALESCE(reuse_count, 0) + 1 WHERE canonical_id = ?",
+            [canonical_id],
+        )
+    return _promote_and_crystallize(canonical_id)
+
+
+def _promote_and_crystallize(canonical_id: str) -> dict[str, Any] | None:
+    promotion = maybe_promote(canonical_id)
+    if promotion:
+        try:
+            from . import wiki as wiki_mod
+            wiki_mod.wiki_crystallize(canonical_id)
+        except Exception as exc:  # noqa: BLE001 — crystallize must never break a read
+            logger.warning("Auto-crystallize failed for %s: %s", canonical_id, exc)
+    return promotion
+
+
+def _promotable_drafts() -> list[str]:
+    with get_connection() as conn:
+        return [r[0] for r in conn.execute(
+            "SELECT canonical_id FROM kg_nodes WHERE status = 'draft' "
+            "AND COALESCE(reuse_count, 0) >= ? AND canonical_id IS NOT NULL",
+            [PROMOTION_REUSE_THRESHOLD],
+        ).fetchall()]
 
 
 @with_retry()

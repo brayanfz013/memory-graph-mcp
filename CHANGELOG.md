@@ -4,6 +4,85 @@ All notable changes to `memory-graph-mcp` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-10-17
+
+**Memoria vigente** — memory that stays true to the code. Every item below was
+measured on a real 625-node / 641-memory production store (FashionAI repo) before
+the fix, and each fix landed test-first (red commit, then green) with a mutation
+pass (all mutants killed). An independent code review (CHANGES_REQUESTED: 2
+blockers, 6 important) was addressed test-first in a follow-up round (R1).
+
+### Fixed
+- **Recall was a write.** `recall` added +1 `reuse_count` to every node it merely
+  returned — a nonsense query "reused" 5 nodes. Recall is now read-only; reuse
+  counts only when a result is opened with `kg_resolve` / `wiki_get`.
+- **Promotion never re-fired.** It was evaluated only inside `record_finding` for
+  the node being recorded, so 190 drafts with reuse ≥ 3 were never promoted and
+  the wiki froze for 3.5 months. Promotion (and wiki crystallization) now happens
+  where reuse grows; `memory_consolidate(dry_run=False)` promotes the backlog
+  (`would_promote` / `promoted`).
+- **A model mismatch broke every recall.** It was only logged, then each query
+  failed on a vector-size cast. With no explicit `EMBEDDING_PROVIDER` /
+  `FASTEMBED_MODEL`, the server now adopts the identity recorded in the store.
+
+### Fixed (review round R1)
+- The recall floor was computed before the store's model was adopted, so the
+  first recall of a process used the default model's floor.
+- Reading the store's identity gave up silently when another process held the
+  DuckDB lock (the normal multi-session case); it now retries ~5 s and warns.
+- `git rev-parse` ran once per node in every recall; HEAD is now resolved once.
+- A failing `git diff` (unreachable commit after a rebase) was cached as
+  "unchanged" forever; it is now reported as `freshness.unknown` and not cached.
+- `./src/x` paths and workspaces inside a bigger repo never matched `git diff`.
+- A superseded fix still marked its problem as resolved.
+
+### Known limitations
+- Reuse is not de-duplicated: an agent that opens the same node 3 times in a
+  loop promotes it. Promotion still requires real opens, not recall hits.
+- Freshness compares commit..HEAD; uncommitted edits are not seen.
+
+### Added
+- **Freshness.** Findings record the HEAD commit; `recall` / `kg_resolve` return
+  `freshness` (cited files missing or changed since) and rank stale nodes lower
+  (`rank_score`). 25% of the cited files in the measured store no longer existed.
+- **Present first.** A `solution` that cites a file of an open `problem` and is
+  about the same subject gets a `SOLVES` edge automatically; recall marks the
+  problem `resolved_by` and ranks the fix first (a fixed problem used to outrank
+  its own fix).
+- **Abstention.** The recall floor comes from the active model's calibrated
+  `recall_floor` (or `RECALL_MIN_SCORE`; only `jina-embeddings-v2-base-es` ships a
+  calibrated floor, the rest keep 0.45); recall returns `abstained: true` when
+  nothing clears it. `embedding_benchmark` accepts `negatives` and reports
+  `abstention.suggested_floor`. E5 models get `query:` / `passage:` prefixes.
+- **`wiki_prune(dry_run=True)`** (tool #30): archives pages of deleted or
+  git-ignored folders and scratch `test.*` pages (reversible). `wiki_lint` reports
+  `stale_directory_pages`. `wiki_bootstrap` skips git-ignored folders and nested
+  worktrees, and `force=True` prunes.
+
+### Changed (breaking — review before upgrading)
+- `recall` no longer increments `reuse_count`. Promotion now comes from opening
+  results (`kg_resolve` / `wiki_get`), which therefore **write** (one UPDATE; a
+  failed write is logged and never breaks the read). Run
+  `memory_consolidate(dry_run=False)` once to promote the backlog.
+- `compact=True` returns only actionable node keys — `node_id, canonical_id,
+  node_type, label, status, semantic_score, rank_score, tldr`, plus `files`,
+  `freshness` and `resolved_by` when present. `properties` (incl. `commit`,
+  `memory_id`) and `brief_96` are gone; compact memories drop `metadata` and are
+  clipped to 240 chars. New summaries no longer restate the title.
+- `wiki_bootstrap(force=True)` also archives stale directory pages, and skips
+  git-ignored folders and nested repos/worktrees (including submodules).
+- E5 models: queries and documents now get `query:` / `passage:` prefixes. An
+  existing e5 store embedded without them must be re-embedded with
+  `embedding_migrate` to benefit.
+- The recall floor is per model. jina-es's calibrated floor (0.3755) is lower
+  than 0.45 because its cosine scale is lower — on its scale it is the stricter
+  floor (it rejected 16/16 off-topic queries the 0.45 bge default let through).
+- Spanish benchmark (29 queries, 16 off-topic): `jina-embeddings-v2-base-es`
+  R@1 0.86 / R@5 1.00 / MRR 0.90 and clean abstention, vs the default
+  `bge-small-en-v1.5` at 0.66 / 0.79 / 0.70 with no separable floor. For Spanish
+  stores set `FASTEMBED_MODEL=jinaai/jina-embeddings-v2-base-es` and run
+  `embedding_migrate`.
+
 ## [0.5.1] — 2026-06-28
 
 Quality fix + usability, validated against a 285-node / 301-memory production

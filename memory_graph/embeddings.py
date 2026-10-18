@@ -29,8 +29,85 @@ logger = logging.getLogger(__name__)
 _provider_instance: Any = None
 
 
+_IDENTITY_FIELDS = ("embedding_provider", "fastembed_model", "ollama_model")
+
+
+def _stored_identity() -> dict[str, Any] | None:
+    """The active embedding identity recorded in this workspace's store, if any.
+
+    Read with a plain short-lived connection (not db.get_connection, whose schema
+    bootstrap itself asks for the provider). Another process holding the DuckDB
+    write lock is the normal multi-session case, so the read retries with backoff
+    (~5 s) before giving up; giving up is logged as a warning, because loading the
+    wrong model makes every recall fail.
+    """
+    import os
+
+    import duckdb
+
+    from .db import with_retry
+
+    if not os.path.exists(settings.db_path):
+        return None
+
+    @with_retry(max_attempts=8, base_delay=0.2, max_delay=1.0)
+    def _read() -> tuple | None:
+        conn = duckdb.connect(settings.db_path)
+        try:
+            return conn.execute(
+                "SELECT provider, model_name FROM embedding_meta WHERE is_active = true "
+                "ORDER BY generation DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+
+    try:
+        row = _read()
+    except duckdb.CatalogException:
+        return None  # store predates embedding_meta: nothing recorded
+    except (duckdb.Error, OSError) as exc:
+        logger.warning("Could not read the store's embedding identity (%s); using configured "
+                       "provider/model, which may not match the stored vectors", exc)
+        return None
+    return {"provider": row[0], "model": row[1]} if row else None
+
+
+_identity_adopted = False
+
+
+def _adopt_store_identity() -> None:
+    """Use the model the store was embedded with unless one is set explicitly.
+
+    Querying a store with a different model than it was embedded with does not
+    degrade gracefully — the vector sizes differ and every recall fails. So when
+    neither EMBEDDING_PROVIDER nor the model is configured, the store decides.
+    Runs once per process; callers that depend on the identity (the provider, the
+    recall floor) call it first.
+    """
+    global _identity_adopted
+    if _identity_adopted:
+        return
+    if set(_IDENTITY_FIELDS) & settings.model_fields_set:
+        _identity_adopted = True
+        return
+    import os
+    if not os.path.exists(settings.db_path):
+        return  # no store yet: decide again once one exists
+    stored = _stored_identity()
+    if not stored:
+        return  # unreadable now (e.g. lock held): try again on the next use
+    _identity_adopted = True
+    settings.embedding_provider = stored["provider"]
+    if stored["provider"] == "fastembed":
+        settings.fastembed_model = stored["model"]
+    elif stored["provider"] == "ollama":
+        settings.ollama_model = stored["model"]
+    logger.info("Adopted the store's embedding identity: %s/%s", stored["provider"], stored["model"])
+
+
 def _build_provider() -> Any:
     """Instantiate the configured provider. Called lazily on first use."""
+    _adopt_store_identity()
     name = settings.embedding_provider.lower()
     if name == "vertex":
         return _VertexProvider()
@@ -121,10 +198,20 @@ class _FastEmbedProvider:
 
     def embed_texts(self, texts: list[str], task_type: str = "") -> list[list[float]]:
         del task_type  # part of the provider contract; FastEmbed has no task-type concept
+        texts = _e5_prefixed(self.model_name, texts, "passage")
         return [vec.tolist() for vec in self._model.embed(texts)]
 
     def embed_query(self, query: str) -> list[float]:
-        return self.embed_texts([query])[0]
+        prefixed = _e5_prefixed(self.model_name, [query], "query")
+        return next(iter(self._model.embed(prefixed))).tolist()
+
+
+def _e5_prefixed(model_name: str, texts: list[str], kind: str) -> list[str]:
+    """E5 models are trained with 'query: ' / 'passage: ' prefixes; without them
+    retrieval quality drops noticeably. Other models get the text unchanged."""
+    if "e5" not in (model_name or "").lower():
+        return list(texts)
+    return [f"{kind}: {t}" for t in texts]
 
 
 # ── Ollama (local HTTP) ────────────────────────────────────────

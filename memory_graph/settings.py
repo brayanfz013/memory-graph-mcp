@@ -207,6 +207,12 @@ class MemoryGraphSettings(BaseSettings):
             "intfloat/multilingual-e5-base (768-dim, multilingual incl. ES)"
         ),
     )
+    # Recall floor. None = use the active model's calibrated `recall_floor` from
+    # PROVIDER_REGISTRY (see embedding_benchmark negatives), else DEFAULT 0.45.
+    recall_min_score: float | None = Field(
+        default=None,
+        description="Cosine floor for recall (env RECALL_MIN_SCORE); overrides the model's calibrated floor",
+    )
     # ollama settings (only used when embedding_provider=ollama)
     ollama_base_url: str = Field(
         default="http://localhost:11434",
@@ -228,10 +234,17 @@ class MemoryGraphSettings(BaseSettings):
 
 
 # Registry of known embedding models and their dimensions.
+# `recall_floor` = recall cosine floor calibrated with embedding_benchmark negatives
+# on a Spanish knowledge-base eval set (29 queries / 16 off-topic, 2026-10-17;
+# abstention accuracy: bge-small-en 0.943 (not separable), MiniLM 0.974,
+# mpnet 1.0 (gap 0.0001), e5-large 1.0 (gap 0.015), jina-es 1.0 (gap 0.075)).
+# Only models with a clear gap carry a floor (jina-es); the others keep the 0.45
+# default because a Spanish-only calibration must not tighten them for English
+# stores. Re-calibrate on your own corpus; RECALL_MIN_SCORE overrides it.
 # Used by embedding_admin to surface "what's available" and validate user choices.
 # Adding a model here is informational only — the actual loading is done by the
 # provider class which detects dimensions on first use.
-PROVIDER_REGISTRY: dict[str, dict[str, dict[str, int | str]]] = {
+PROVIDER_REGISTRY: dict[str, dict[str, dict[str, int | str | float]]] = {
     "fastembed": {
         "BAAI/bge-small-en-v1.5": {"dim": 384, "lang": "en", "note": "smallest, fastest"},
         "BAAI/bge-base-en-v1.5": {"dim": 768, "lang": "en", "note": "stronger EN"},
@@ -243,7 +256,7 @@ PROVIDER_REGISTRY: dict[str, dict[str, dict[str, int | str]]] = {
         },
         "jinaai/jina-embeddings-v2-base-es": {
             "dim": 768, "lang": "es", "note": "Spanish-specialised",
-        },
+            "recall_floor": 0.3755},
         "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2": {
             "dim": 384, "lang": "multi", "note": "tiny multilingual, fast",
         },

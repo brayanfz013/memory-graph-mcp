@@ -44,7 +44,7 @@ record_finding(
 )
 ```
 
-One call does: vector memory + KG node + canonical_id dedup + tldr_32/brief_96 compression + auto-edges (cosine ≥ 0.62) + auto-promote at reuse ≥ 3 + auto-wiki on canonical.
+One call does: vector memory + KG node + canonical_id dedup + tldr_32/brief_96 compression + auto-edges (cosine ≥ 0.62) + HEAD commit for freshness + auto-`SOLVES` from a solution to the open problem it fixes (shared file + same subject). Promotion to canonical (and auto-wiki) happens when the node is **opened** 3 times with `kg_resolve`/`wiki_get` — a `recall` hit is not a use.
 
 ### Type cheatsheet
 
@@ -146,6 +146,8 @@ See `PROTOCOL.md` for the full operator manual.
 - `memory_report()` — counts + lint + top influential
 - `memory_consolidate(dry_run=False)` — purge expired + recompute PageRank (weekly)
 - `wiki_bootstrap()` — crystallize new canonicals (after large batches)
+- `wiki_prune(dry_run=True)` — archive pages of deleted / git-ignored folders (reversible)
+- `memory_consolidate(dry_run=False)` — also promotes drafts already over the reuse threshold
 
 ## Anti-patterns
 

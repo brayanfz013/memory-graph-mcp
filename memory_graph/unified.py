@@ -16,18 +16,50 @@ from typing import Any
 
 from .db import get_connection
 from .embeddings import embed_query
-from .knowledge_graph import VALID_NODE_TYPES, _bfs_expand, _row_to_node
+from .freshness import annotate as annotate_freshness
+from .freshness import head_commit
+from .knowledge_graph import (
+    RESOLVED_PENALTY,
+    VALID_NODE_TYPES,
+    _bfs_expand,
+    _row_to_node,
+    resolved_by,
+)
 
 logger = logging.getLogger(__name__)
 
 VALID_SCOPES = {"memories", "kg", "wiki", "all"}
 
 
+DEFAULT_MIN_SCORE = 0.45
+
+
+def effective_min_score() -> float:
+    """Recall floor: env RECALL_MIN_SCORE > the active model's calibrated
+    `recall_floor` in PROVIDER_REGISTRY > DEFAULT_MIN_SCORE.
+
+    A fixed floor is meaningless across models: cosine scales differ per model
+    (an English model over Spanish text puts unrelated queries at ~0.7). The
+    floor must be calibrated per model with negative queries (embedding_benchmark).
+    """
+    from .embeddings import _adopt_store_identity
+    from .settings import PROVIDER_REGISTRY, settings
+
+    _adopt_store_identity()  # the floor belongs to the store's model, not the default one
+    if settings.recall_min_score is not None:
+        return float(settings.recall_min_score)
+    provider = settings.embedding_provider
+    model = {"fastembed": settings.fastembed_model, "ollama": settings.ollama_model}.get(
+        provider, "text-embedding-005")
+    floor = PROVIDER_REGISTRY.get(provider, {}).get(model, {}).get("recall_floor")
+    return float(floor) if floor is not None else DEFAULT_MIN_SCORE
+
+
 def recall(
     query: str,
     scope: str = "all",
     top_k: int = 10,
-    min_score: float = 0.45,
+    min_score: float | None = None,
     node_type: str | None = None,
     hops: int = 1,
     compact: bool = False,
@@ -39,7 +71,8 @@ def recall(
         query: natural language search.
         scope: 'memories' | 'kg' | 'wiki' | 'all' (default).
         top_k: max results per scope.
-        min_score: cosine similarity floor (0–1).
+        min_score: cosine similarity floor (0–1). None (default) = effective_min_score(),
+            the active model's calibrated floor; below it recall abstains.
         node_type: optional KG node_type filter (Decision/Solution/...).
         hops: BFS expansion from KG seed nodes (0 to disable).
         compact: token-saving mode. Drops the redundant raw `content` blob from
@@ -62,6 +95,8 @@ def recall(
     if scope not in VALID_SCOPES:
         return {"error": f"Invalid scope. Must be one of: {sorted(VALID_SCOPES)}"}
 
+    if min_score is None:
+        min_score = effective_min_score()
     qvec = embed_query(query)
     dim = len(qvec)
 
@@ -79,7 +114,7 @@ def recall(
             if cid:
                 canonicals_seen[cid] = max(
                     canonicals_seen.get(cid, 0.0),
-                    n.get("semantic_score", 0.0),
+                    n.get("rank_score", n.get("semantic_score", 0.0)),
                 )
 
     if scope in {"wiki", "all"}:
@@ -98,6 +133,10 @@ def recall(
         )[:top_k]
     ]
     out["search_mode"] = "semantic"
+    out["min_score"] = min_score
+    out["abstained"] = not (
+        out.get("memories") or (out.get("kg") or {}).get("nodes") or out.get("wiki")
+    )
 
     if group_topics and "kg" in out:
         out["topics"] = _group_by_topic(out["kg"].get("nodes", []))
@@ -155,26 +194,68 @@ def _group_by_topic(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(buckets.values(), key=lambda b: len(b["members"]), reverse=True)
 
 
+_MEMORY_SNIPPET_CHARS = 240
+
+
+def _strip_title(text: str | None, label: str | None) -> str:
+    """Drop a leading 'Title: ' that <=0.5.1 baked into stored summaries."""
+    text = (text or "").strip()
+    if label and text.startswith(label):
+        text = text[len(label):].lstrip(" :—-")
+    return text
+
+
+def _compact_node(n: dict[str, Any]) -> dict[str, Any]:
+    """Only what a reader acts on: identity, scores, a short gist, and flags."""
+    out: dict[str, Any] = {
+        "node_id": n.get("node_id"),
+        "canonical_id": n.get("canonical_id"),
+        "node_type": n.get("node_type"),
+        "label": n.get("label"),
+        "status": n.get("status"),
+        "semantic_score": n.get("semantic_score"),
+        "rank_score": n.get("rank_score", n.get("semantic_score")),
+        "tldr": _strip_title(n.get("tldr_32"), n.get("label")),
+    }
+    files = (n.get("properties") or {}).get("files")
+    if files:
+        out["files"] = files
+    fr = n.get("freshness")
+    if fr and fr.get("stale"):
+        out["freshness"] = fr
+    if n.get("resolved_by"):
+        out["resolved_by"] = n["resolved_by"]
+    return out
+
+
 def _apply_compaction(out: dict[str, Any]) -> None:
-    """Trim redundant payload in-place to cut token cost (see recall(compact=…))."""
-    kg_nodes = out.get("kg", {}).get("nodes", []) if isinstance(out.get("kg"), dict) else []
+    """Trim the payload in-place to cut token cost (see recall(compact=…)).
 
-    # memory_ids already represented by a returned KG node → drop the dup memory
-    represented_mem_ids: set[str] = set()
-    for n in kg_nodes:
-        props = n.get("properties") or {}
-        mem_id = props.get("memory_id")
-        if mem_id:
-            represented_mem_ids.add(mem_id)
-        # strip the heavy raw content; tldr_32 / brief_96 carry the gist
-        if isinstance(props, dict) and "content" in props:
-            slim = {k: v for k, v in props.items() if k != "content"}
-            n["properties"] = slim
+    KG nodes keep only actionable keys (no properties, no brief, no title restated
+    in the gist); memories already represented by a returned node are dropped and
+    the rest are clipped; wiki snippets are clipped.
+    """
+    kg = out.get("kg") if isinstance(out.get("kg"), dict) else {}
+    kg_nodes = kg.get("nodes", []) if kg else []
 
-    if "memories" in out and represented_mem_ids:
-        out["memories"] = [
-            m for m in out["memories"] if m.get("id") not in represented_mem_ids
-        ]
+    represented_mem_ids = {
+        (n.get("properties") or {}).get("memory_id") for n in kg_nodes
+    } - {None}
+    if kg:
+        kg["nodes"] = [_compact_node(n) for n in kg_nodes]
+
+    if "memories" in out:
+        kept = []
+        for m in out["memories"]:
+            if m.get("id") in represented_mem_ids:
+                continue
+            m = dict(m)
+            m.pop("metadata", None)
+            c = m.get("content") or ""
+            if len(c) > _MEMORY_SNIPPET_CHARS:
+                m["content"] = c[:_MEMORY_SNIPPET_CHARS] + "…"
+            kept.append(m)
+        out["memories"] = kept
 
     for w in out.get("wiki", []) or []:
         snip = w.get("snippet") or ""
@@ -293,11 +374,8 @@ def _recall_kg(
                 seed_nodes.append(node)
                 seed_ids.add(node["node_id"])
 
-        for nid in seed_ids:
-            conn.execute(
-                "UPDATE kg_nodes SET reuse_count = COALESCE(reuse_count, 0) + 1 WHERE node_id = ?",
-                [nid],
-            )
+        # recall is a READ: returning a node is not using it. Reuse is counted only
+        # when the caller opens a result (kg_resolve / wiki_get → intelligence.register_use).
 
         expanded_nodes, expanded_edges = _bfs_expand(conn, seed_ids, hops)
 
@@ -307,9 +385,17 @@ def _recall_kg(
             if n["node_id"] not in all_nodes:
                 all_nodes[n["node_id"]] = n
 
+        head = head_commit()  # once per recall, not once per node
+        for n in all_nodes.values():
+            annotate_freshness(n, head=head)
+        fixes = resolved_by(conn, list(all_nodes))
+        for nid, cids in fixes.items():
+            n = all_nodes[nid]
+            n["resolved_by"] = cids
+            n["rank_score"] = round(n.get("rank_score", 0.0) * RESOLVED_PENALTY, 4)
         ranked = sorted(
             all_nodes.values(),
-            key=lambda n: (n.get("semantic_score", 0.0), n["pagerank_score"]),
+            key=lambda n: (n.get("rank_score", 0.0), n["pagerank_score"]),
             reverse=True,
         )[:top_k]
 
