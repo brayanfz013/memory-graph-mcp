@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,7 @@ def head_commit(root: Path | None = None) -> str | None:
 
 
 _DIFF_CACHE: dict[tuple[str, str, str], frozenset[str]] = {}
+_DIFF_LOCK = threading.Lock()  # MCP handlers may run concurrently
 
 
 def _changed_since(root: str, commit: str, head: str) -> frozenset[str] | None:
@@ -60,15 +62,17 @@ def _changed_since(root: str, commit: str, head: str) -> frozenset[str] | None:
     reachable after a rebase — returns None, which callers report as unknown.
     """
     key = (root, commit, head)
-    if key in _DIFF_CACHE:
-        return _DIFF_CACHE[key]
+    with _DIFF_LOCK:
+        if key in _DIFF_CACHE:
+            return _DIFF_CACHE[key]
     out = _git(Path(root), "diff", "--name-only", "--relative", commit, head)
     if out is None:
         return None
     names = frozenset(os.path.normpath(n) for n in out.splitlines() if n)
-    if len(_DIFF_CACHE) > 512:
-        _DIFF_CACHE.clear()
-    _DIFF_CACHE[key] = names
+    with _DIFF_LOCK:
+        if len(_DIFF_CACHE) > 512:
+            _DIFF_CACHE.clear()
+        _DIFF_CACHE[key] = names
     return names
 
 

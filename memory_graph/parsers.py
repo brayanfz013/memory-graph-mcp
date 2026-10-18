@@ -133,8 +133,8 @@ class PythonParser(BaseParser):
 
     def _load_language(self, path: Path) -> Any | None:
         try:
-            from tree_sitter_python import language
             import tree_sitter
+            from tree_sitter_python import language
             return tree_sitter.Language(language())
         except (ImportError, AttributeError, ValueError, KeyError, TypeError):
             return None

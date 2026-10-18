@@ -549,7 +549,9 @@ def _auto_solves(
 ) -> list[dict[str, Any]]:
     """SOLVES edges from a new Solution to the open Problems it fixes.
 
-    A Problem is considered fixed by this Solution only when BOTH hold:
+    Scans every non-superseded Problem with a vector (fine at hundreds; past a few
+    thousand, prefilter by cited file before the cosine). A Problem is considered
+    fixed by this Solution only when BOTH hold:
       * they cite at least one common file (same code), and
       * their texts are about the same subject (cosine >= AUTO_EDGE_MIN_SCORE).
     Either signal alone is too weak: a file is touched by many unrelated issues,

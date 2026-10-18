@@ -36,6 +36,11 @@ blockers, 6 important) was addressed test-first in a follow-up round (R1).
 - `./src/x` paths and workspaces inside a bigger repo never matched `git diff`.
 - A superseded fix still marked its problem as resolved.
 
+### Known limitations
+- Reuse is not de-duplicated: an agent that opens the same node 3 times in a
+  loop promotes it. Promotion still requires real opens, not recall hits.
+- Freshness compares commit..HEAD; uncommitted edits are not seen.
+
 ### Added
 - **Freshness.** Findings record the HEAD commit; `recall` / `kg_resolve` return
   `freshness` (cited files missing or changed since) and rank stale nodes lower

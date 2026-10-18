@@ -87,12 +87,16 @@ def _adopt_store_identity() -> None:
     global _identity_adopted
     if _identity_adopted:
         return
-    _identity_adopted = True
     if set(_IDENTITY_FIELDS) & settings.model_fields_set:
+        _identity_adopted = True
         return
+    import os
+    if not os.path.exists(settings.db_path):
+        return  # no store yet: decide again once one exists
     stored = _stored_identity()
     if not stored:
-        return
+        return  # unreadable now (e.g. lock held): try again on the next use
+    _identity_adopted = True
     settings.embedding_provider = stored["provider"]
     if stored["provider"] == "fastembed":
         settings.fastembed_model = stored["model"]

@@ -32,7 +32,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 logger = logging.getLogger(__name__)
 
 EVAL_SET_PATH = Path(__file__).resolve().parents[1] / "eval" / "eval_set.json"
