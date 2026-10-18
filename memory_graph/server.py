@@ -479,6 +479,17 @@ def embedding_benchmark(
 
 
 @mcp.tool()
+def wiki_prune(dry_run: bool = True) -> dict:
+    """Archive wiki pages that no longer describe the repo (reversible: status='archived').
+
+    Targets directory pages whose folder was deleted or is now git-ignored, and
+    scratch pages whose canonical_id starts with 'test.'. Archived pages stop
+    appearing in recall and wiki_get. Default dry_run=True only reports.
+    """
+    return wiki.wiki_prune(dry_run=dry_run)
+
+
+@mcp.tool()
 def wiki_bootstrap(force: bool = False, max_dirs: int = 30) -> dict[str, Any]:
     """Seed wiki from workspace structure + crystallize all canonical KG nodes.
 

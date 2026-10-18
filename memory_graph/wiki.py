@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -419,13 +420,15 @@ def wiki_lint() -> dict[str, Any]:
                       (SELECT page_id FROM wiki_pages))"""
         ).fetchall()
 
+        stale_dirs = _stale_directory_pages(conn, Path(settings.workspace_path))
         return {
+            "stale_directory_pages": stale_dirs,
             "orphaned_pages": [{"page_id": r[0], "title": r[1]} for r in orphaned],
             "canonical_without_wiki": [
                 {"node_id": r[0], "canonical_id": r[1], "label": r[2]}
                 for r in missing_wiki
             ],
-            "issues_total": len(orphaned) + len(missing_wiki),
+            "issues_total": len(orphaned) + len(missing_wiki) + len(stale_dirs),
         }
 
 
@@ -451,6 +454,80 @@ def _should_skip_dir(name: str) -> bool:
     if name.startswith(".") and name not in {".github", ".vscode", ".claude", ".codex"}:
         return True
     return name in _SKIP_DIRS or name.endswith(".egg-info")
+
+
+def _git_ignored(root: Path, rel_paths: list[str]) -> set[str]:
+    """Subset of rel_paths that git ignores in `root` (empty when not a git repo)."""
+    if not rel_paths:
+        return set()
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "--stdin"],
+            input="\n".join(rel_paths), capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    # rc 0 = some ignored, 1 = none ignored, 128 = not a repo / error
+    return set(out.stdout.split("\n")) - {""} if out.returncode == 0 else set()
+
+
+def _is_nested_repo(path: Path) -> bool:
+    """A nested git repo or worktree (``.git`` dir or ``gitdir:`` file): not this repo's code."""
+    return (path / ".git").exists()
+
+
+_DIR_PAGE_PREFIX = "workspace.dir-"
+_DIR_TITLE_PREFIX = "Directory: "
+_JUNK_PREFIXES = ("test.", "test-")
+
+
+def _stale_directory_pages(conn: Any, root: Path) -> list[dict[str, str]]:
+    """Active directory pages whose folder no longer exists or is now git-ignored."""
+    rows = conn.execute(
+        "SELECT canonical_id, title FROM wiki_pages "
+        "WHERE status = 'active' AND canonical_id LIKE ?",
+        [_DIR_PAGE_PREFIX + "%"],
+    ).fetchall()
+    rels = {cid: (title or "")[len(_DIR_TITLE_PREFIX):] for cid, title in rows
+            if (title or "").startswith(_DIR_TITLE_PREFIX)}
+    ignored = _git_ignored(root, [r + "/" for r in rels.values()])
+    stale = []
+    for cid, rel in sorted(rels.items()):
+        if not (root / rel).is_dir():
+            stale.append({"canonical_id": cid, "path": rel, "reason": "missing"})
+        elif rel + "/" in ignored:
+            stale.append({"canonical_id": cid, "path": rel, "reason": "git_ignored"})
+    return stale
+
+
+def wiki_prune(dry_run: bool = True) -> dict[str, Any]:
+    """Archive wiki pages that no longer describe the repo.
+
+    Archives (status='archived', reversible — nothing is deleted):
+      * directory pages whose folder is gone or now git-ignored;
+      * scratch pages whose canonical_id starts with 'test.'/'test-'.
+    Archived pages disappear from recall and wiki_get. dry_run=True only reports.
+    """
+    root = Path(settings.workspace_path)
+    with get_connection() as conn:
+        _ensure_wiki_table(conn)
+        stale = _stale_directory_pages(conn, root)
+        junk = [r[0] for r in conn.execute(
+            "SELECT canonical_id FROM wiki_pages WHERE status = 'active' AND ("
+            + " OR ".join("canonical_id LIKE ?" for _ in _JUNK_PREFIXES) + ")",
+            [p + "%" for p in _JUNK_PREFIXES],
+        ).fetchall()]
+        targets = sorted({s["canonical_id"] for s in stale} | set(junk))
+        out: dict[str, Any] = {"dry_run": dry_run, "would_archive": targets,
+                               "stale_directory_pages": stale, "junk_pages": junk}
+        if not dry_run and targets:
+            ph = ", ".join("?" for _ in targets)
+            conn.execute(
+                f"UPDATE wiki_pages SET status = 'archived', updated_at = current_timestamp "
+                f"WHERE canonical_id IN ({ph})", targets,
+            )
+        out["archived"] = 0 if dry_run else len(targets)
+    return out
 
 
 def _read_file_safe(path: Path, max_chars: int = _MAX_FILE_CHARS) -> str | None:
@@ -631,7 +708,14 @@ def wiki_bootstrap(
     # ── 2. Per-directory pages ──
     dirs_analyzed = 0
     for dirpath, dirnames, _filenames in os.walk(workspace_root):
-        dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
+        here = Path(dirpath)
+        dirnames[:] = [d for d in dirnames
+                       if not _should_skip_dir(d) and not _is_nested_repo(here / d)]
+        if dirnames:
+            rel_here = here.relative_to(workspace_root)
+            cand = [str(rel_here / d) + "/" if str(rel_here) != "." else d + "/" for d in dirnames]
+            ignored = _git_ignored(workspace_root, cand)
+            dirnames[:] = [d for d, c in zip(dirnames, cand) if c not in ignored]
 
         if dirs_analyzed >= max_dirs:
             break
@@ -756,11 +840,18 @@ def wiki_bootstrap(
     updated += canon_updated
     pages_info.extend(canon_pages)
 
+    # A forced rebuild also retires what no longer exists, so the wiki tracks the repo.
+    archived: list[str] = []
+    if force:
+        pruned = wiki_prune(dry_run=False)
+        archived = pruned["would_archive"]
+
     logger.info(
-        "Wiki bootstrap complete: %d created, %d updated, %d skipped (incl. %d canonicals)",
-        created, updated, skipped, canon_created + canon_updated,
+        "Wiki bootstrap complete: %d created, %d updated, %d skipped (incl. %d canonicals), %d archived",
+        created, updated, skipped, canon_created + canon_updated, len(archived),
     )
     return {
+        "archived": archived,
         "created": created,
         "updated": updated,
         "skipped": skipped,

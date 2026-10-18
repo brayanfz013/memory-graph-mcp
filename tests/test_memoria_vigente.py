@@ -406,6 +406,13 @@ class WikiPruneTests(WorkspaceTestCase):
         lint = self.mods["wiki"].wiki_lint()
         self.assertEqual([p["canonical_id"] for p in lint["stale_directory_pages"]], ["workspace.dir-src-old"])
 
+    def test_lint_reports_dir_that_became_git_ignored(self) -> None:
+        self.mods["wiki"].wiki_bootstrap()
+        (self.workspace / ".gitignore").write_text("temp/\nsrc/old/\n")
+        stale = self.mods["wiki"].wiki_lint()["stale_directory_pages"]
+        self.assertEqual([(p["canonical_id"], p["reason"]) for p in stale],
+                         [("workspace.dir-src-old", "git_ignored")])
+
     def test_prune_dry_run_then_apply_archives_stale_and_junk(self) -> None:
         w = self.mods["wiki"]
         w.wiki_bootstrap()
