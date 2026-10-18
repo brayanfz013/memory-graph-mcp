@@ -121,10 +121,20 @@ class _FastEmbedProvider:
 
     def embed_texts(self, texts: list[str], task_type: str = "") -> list[list[float]]:
         del task_type  # part of the provider contract; FastEmbed has no task-type concept
+        texts = _e5_prefixed(self.model_name, texts, "passage")
         return [vec.tolist() for vec in self._model.embed(texts)]
 
     def embed_query(self, query: str) -> list[float]:
-        return self.embed_texts([query])[0]
+        prefixed = _e5_prefixed(self.model_name, [query], "query")
+        return next(iter(self._model.embed(prefixed))).tolist()
+
+
+def _e5_prefixed(model_name: str, texts: list[str], kind: str) -> list[str]:
+    """E5 models are trained with 'query: ' / 'passage: ' prefixes; without them
+    retrieval quality drops noticeably. Other models get the text unchanged."""
+    if "e5" not in (model_name or "").lower():
+        return list(texts)
+    return [f"{kind}: {t}" for t in texts]
 
 
 # ── Ollama (local HTTP) ────────────────────────────────────────

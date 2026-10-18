@@ -97,7 +97,8 @@ def embedding_benchmark(
             })
             continue
         try:
-            metrics = _benchmark_one(provider, model, seeds, queries, top_k)
+            metrics = _benchmark_one(provider, model, seeds, queries, top_k,
+                                     eval_set.get("negatives") or [])
         except Exception as exc:
             logger.exception("Benchmark failed for %s/%s", provider, model)
             metrics = {"error": f"{type(exc).__name__}: {exc}"}
@@ -111,12 +112,49 @@ def embedding_benchmark(
     }
 
 
+def _abstention(positive_scores: list[float], negative_scores: list[float]) -> dict[str, Any]:
+    """Pick the recall floor that best separates answerable queries from off-topic ones.
+
+    positive_scores: top-1 score of queries whose expected seed ranked first.
+    negative_scores: top-1 score of off-topic queries (should be rejected).
+    If the two sets are separable the floor is the midpoint of the gap (most
+    robust); otherwise it is the lowest threshold with the best accuracy
+    (keep positives >= floor, reject negatives < floor).
+    """
+    if not positive_scores or not negative_scores:
+        return {"suggested_floor": None, "n_positive": len(positive_scores),
+                "n_negative": len(negative_scores)}
+    total = len(positive_scores) + len(negative_scores)
+
+    def accuracy(t: float) -> float:
+        kept = sum(1 for p in positive_scores if p >= t)
+        rejected = sum(1 for n in negative_scores if n < t)
+        return (kept + rejected) / total
+
+    neg_max, pos_min = max(negative_scores), min(positive_scores)
+    if neg_max < pos_min:
+        floor = (neg_max + pos_min) / 2
+    else:
+        candidates = sorted(set(positive_scores) | {n + 1e-4 for n in negative_scores})
+        best = max(accuracy(t) for t in candidates)
+        floor = min(t for t in candidates if accuracy(t) == best)
+    return {
+        "suggested_floor": round(floor, 4),
+        "abstention_accuracy": round(accuracy(floor), 3),
+        "positive_top1_min": round(pos_min, 4),
+        "negative_max": round(neg_max, 4),
+        "n_positive": len(positive_scores),
+        "n_negative": len(negative_scores),
+    }
+
+
 def _benchmark_one(
     provider: str,
     model: str,
     seeds: list[dict[str, Any]],
     queries: list[dict[str, Any]],
     top_k: int,
+    negatives: list[str] | None = None,
 ) -> dict[str, Any]:
     """Spin up an isolated workspace, seed, run queries, compute metrics."""
     workspace = Path(tempfile.mkdtemp(prefix="mg-bench-"))
@@ -177,7 +215,8 @@ def _benchmark_one(
         latencies: list[float] = []
         for q in queries:
             t0 = time.perf_counter()
-            recall = unified.recall(query=q["query"], top_k=top_k, scope="memories")
+            # min_score=0: measure ranks, not the floor (the floor is what we calibrate).
+            recall = unified.recall(query=q["query"], top_k=top_k, scope="memories", min_score=0.0)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             latencies.append(elapsed_ms)
             ranked_node_ids = [
@@ -188,9 +227,11 @@ def _benchmark_one(
             ]
             expected_node_id = seed_id_to_node_id.get(q["expected_seed_id"], "")
             rank = _find_rank(ranked_node_ids, expected_node_id, recall.get("memories", []), q["expected_seed_id"], seeds)
+            mems = recall.get("memories", [])
             per_query.append({
                 "query": q["query"],
                 "expected": q["expected_seed_id"],
+                "top_score": mems[0]["score"] if mems else 0.0,
                 "rank": rank,
                 "found": rank is not None and rank <= top_k,
                 "latency_ms": round(elapsed_ms, 2),
@@ -203,8 +244,16 @@ def _benchmark_one(
         mrr = sum(reciprocal_ranks) / len(per_query) if per_query else 0.0
         mean_latency = statistics.mean(latencies) if latencies else 0.0
 
+        negative_scores = []
+        for neg in negatives or []:
+            res = unified.recall(query=neg, top_k=1, scope="memories", min_score=0.0)
+            mems = res.get("memories", [])
+            negative_scores.append(mems[0]["score"] if mems else 0.0)
+
         return {
             "identity": identity,
+            "abstention": _abstention(
+                [r["top_score"] for r in per_query if r["rank"] == 1], negative_scores),
             "recall@1": round(recall_at_1, 3),
             "recall@5": round(recall_at_5, 3),
             "mrr": round(mrr, 3),

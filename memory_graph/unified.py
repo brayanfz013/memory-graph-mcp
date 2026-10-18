@@ -30,11 +30,33 @@ logger = logging.getLogger(__name__)
 VALID_SCOPES = {"memories", "kg", "wiki", "all"}
 
 
+DEFAULT_MIN_SCORE = 0.45
+
+
+def effective_min_score() -> float:
+    """Recall floor: env RECALL_MIN_SCORE > the active model's calibrated
+    `recall_floor` in PROVIDER_REGISTRY > DEFAULT_MIN_SCORE.
+
+    A fixed floor is meaningless across models: cosine scales differ per model
+    (an English model over Spanish text puts unrelated queries at ~0.7). The
+    floor must be calibrated per model with negative queries (embedding_benchmark).
+    """
+    from .settings import PROVIDER_REGISTRY, settings
+
+    if settings.recall_min_score is not None:
+        return float(settings.recall_min_score)
+    provider = settings.embedding_provider
+    model = {"fastembed": settings.fastembed_model, "ollama": settings.ollama_model}.get(
+        provider, "text-embedding-005")
+    floor = PROVIDER_REGISTRY.get(provider, {}).get(model, {}).get("recall_floor")
+    return float(floor) if floor is not None else DEFAULT_MIN_SCORE
+
+
 def recall(
     query: str,
     scope: str = "all",
     top_k: int = 10,
-    min_score: float = 0.45,
+    min_score: float | None = None,
     node_type: str | None = None,
     hops: int = 1,
     compact: bool = False,
@@ -46,7 +68,8 @@ def recall(
         query: natural language search.
         scope: 'memories' | 'kg' | 'wiki' | 'all' (default).
         top_k: max results per scope.
-        min_score: cosine similarity floor (0–1).
+        min_score: cosine similarity floor (0–1). None (default) = effective_min_score(),
+            the active model's calibrated floor; below it recall abstains.
         node_type: optional KG node_type filter (Decision/Solution/...).
         hops: BFS expansion from KG seed nodes (0 to disable).
         compact: token-saving mode. Drops the redundant raw `content` blob from
@@ -69,6 +92,8 @@ def recall(
     if scope not in VALID_SCOPES:
         return {"error": f"Invalid scope. Must be one of: {sorted(VALID_SCOPES)}"}
 
+    if min_score is None:
+        min_score = effective_min_score()
     qvec = embed_query(query)
     dim = len(qvec)
 
@@ -105,6 +130,10 @@ def recall(
         )[:top_k]
     ]
     out["search_mode"] = "semantic"
+    out["min_score"] = min_score
+    out["abstained"] = not (
+        out.get("memories") or (out.get("kg") or {}).get("nodes") or out.get("wiki")
+    )
 
     if group_topics and "kg" in out:
         out["topics"] = _group_by_topic(out["kg"].get("nodes", []))

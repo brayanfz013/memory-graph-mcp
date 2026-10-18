@@ -207,6 +207,12 @@ class MemoryGraphSettings(BaseSettings):
             "intfloat/multilingual-e5-base (768-dim, multilingual incl. ES)"
         ),
     )
+    # Recall floor. None = use the active model's calibrated `recall_floor` from
+    # PROVIDER_REGISTRY (see embedding_benchmark negatives), else DEFAULT 0.45.
+    recall_min_score: float | None = Field(
+        default=None,
+        description="Cosine floor for recall (env RECALL_MIN_SCORE); overrides the model's calibrated floor",
+    )
     # ollama settings (only used when embedding_provider=ollama)
     ollama_base_url: str = Field(
         default="http://localhost:11434",

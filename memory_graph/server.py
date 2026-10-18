@@ -103,7 +103,7 @@ def recall(
     query: str,
     scope: str = "all",
     top_k: int = 10,
-    min_score: float = 0.45,
+    min_score: float | None = None,
     node_type: str | None = None,
     hops: int = 1,
     compact: bool = False,
