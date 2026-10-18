@@ -4,6 +4,53 @@ All notable changes to `memory-graph-mcp` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-10-17
+
+**Memoria vigente** — memory that stays true to the code. Every item below was
+measured on a real 625-node / 641-memory production store (FashionAI repo) before
+the fix, and each fix landed test-first (red commit, then green) with a mutation
+pass (51 mutants, all killed).
+
+### Fixed
+- **Recall was a write.** `recall` added +1 `reuse_count` to every node it merely
+  returned — a nonsense query "reused" 5 nodes. Recall is now read-only; reuse
+  counts only when a result is opened with `kg_resolve` / `wiki_get`.
+- **Promotion never re-fired.** It was evaluated only inside `record_finding` for
+  the node being recorded, so 190 drafts with reuse ≥ 3 were never promoted and
+  the wiki froze for 3.5 months. Promotion (and wiki crystallization) now happens
+  where reuse grows; `memory_consolidate(dry_run=False)` promotes the backlog
+  (`would_promote` / `promoted`).
+- **A model mismatch broke every recall.** It was only logged, then each query
+  failed on a vector-size cast. With no explicit `EMBEDDING_PROVIDER` /
+  `FASTEMBED_MODEL`, the server now adopts the identity recorded in the store.
+
+### Added
+- **Freshness.** Findings record the HEAD commit; `recall` / `kg_resolve` return
+  `freshness` (cited files missing or changed since) and rank stale nodes lower
+  (`rank_score`). 25% of the cited files in the measured store no longer existed.
+- **Present first.** A `solution` that cites a file of an open `problem` and is
+  about the same subject gets a `SOLVES` edge automatically; recall marks the
+  problem `resolved_by` and ranks the fix first (a fixed problem used to outrank
+  its own fix).
+- **Abstention.** The recall floor comes from the active model's calibrated
+  `recall_floor` (or `RECALL_MIN_SCORE`; only `jina-embeddings-v2-base-es` ships a
+  calibrated floor, the rest keep 0.45); recall returns `abstained: true` when
+  nothing clears it. `embedding_benchmark` accepts `negatives` and reports
+  `abstention.suggested_floor`. E5 models get `query:` / `passage:` prefixes.
+- **`wiki_prune(dry_run=True)`** (tool #30): archives pages of deleted or
+  git-ignored folders and scratch `test.*` pages (reversible). `wiki_lint` reports
+  `stale_directory_pages`. `wiki_bootstrap` skips git-ignored folders and nested
+  worktrees, and `force=True` prunes.
+
+### Changed
+- `compact=True` returns only actionable node keys (no `properties`, no brief)
+  and a title-free `tldr`; new summaries no longer restate the title.
+- Spanish benchmark (29 queries, 16 off-topic): `jina-embeddings-v2-base-es`
+  R@1 0.86 / R@5 1.00 / MRR 0.90 and clean abstention, vs the default
+  `bge-small-en-v1.5` at 0.66 / 0.79 / 0.70 with no separable floor. For Spanish
+  stores set `FASTEMBED_MODEL=jinaai/jina-embeddings-v2-base-es` and run
+  `embedding_migrate`.
+
 ## [0.5.1] — 2026-06-28
 
 Quality fix + usability, validated against a 285-node / 301-memory production

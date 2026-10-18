@@ -51,7 +51,9 @@ What this one call does behind the scenes:
 2. Creates a KG node with a stable `canonical_id` (deduplicates if you record the same thing twice).
 3. Generates `tldr_32 / brief_96 / summary_256` compression levels.
 4. Auto-infers up to 3 `RELATED_TO` edges to semantically similar existing nodes (cosine ≥ 0.62).
-5. Auto-promotes to `canonical` when `reuse_count ≥ 3`.
+5. Auto-promotes to `canonical` when `reuse_count ≥ 3`. Reuse means a result was **opened** with `kg_resolve` or `wiki_get`; appearing in a `recall` list does not count. `memory_consolidate(dry_run=False)` promotes drafts that already met the threshold.
+6. A `solution` that cites a file of an open `problem` and talks about the same subject gets a `SOLVES` edge automatically; `recall` then marks the problem `resolved_by` and ranks the fix first.
+7. The node stores the HEAD commit; `recall`/`kg_resolve` report `freshness` (cited files missing or changed since) and stale nodes rank lower.
 6. Auto-crystallizes a wiki page when the node becomes canonical.
 
 > **Rule of thumb:** if a future you (or future agent) would benefit from knowing this, record it. The cost is one call; the cost of *not* recording is paying the discovery cost again.
@@ -155,6 +157,8 @@ Different embedding models give different recall quality. `memory-graph` ships p
 | Per session start | `recall(query="recent context", top_k=3)` | Pick up where you left off |
 | Per session end | `record_finding(...)` for anything notable | Don't lose what you learned |
 | Weekly (or after large batch of new canonicals) | `wiki_bootstrap()` | Crystallize new canonicals into wiki |
+| After moving/deleting folders | `wiki_prune(dry_run=True)` then `dry_run=False` | Archive pages of folders that no longer exist or are git-ignored (reversible) |
+| After many sessions | `memory_consolidate(dry_run=False)` | Purge expired entries, promote drafts already over the reuse threshold |
 | Weekly | `memory_consolidate(dry_run=False)` | Purge expired + recompute PageRank |
 | As needed | `memory_report()` | Health: counts, lint, top influential |
 

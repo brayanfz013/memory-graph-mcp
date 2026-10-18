@@ -39,9 +39,10 @@ workspace-scoped DuckDB store is isolated (same pattern as test_storm_features).
 from __future__ import annotations
 
 import importlib
-import subprocess
+import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -69,8 +70,8 @@ _MODULE_NAMES = (
 
 _FINDING = (
     "DuckDB transient lock retry with exponential backoff",
-    "Wrap writes in a retry decorator with exponential backoff. Detect transient "
-    "errors by lock-related message substrings on the DuckDB file.",
+    ("Wrap writes in a retry decorator with exponential backoff. Detect transient "
+     "errors by lock-related message substrings on the DuckDB file."),
 )
 
 
@@ -324,7 +325,6 @@ class ProblemSolutionTests(WorkspaceTestCase):
 
 # ── T4: compact recall is actually compact, summaries never restate the title ──
 
-import json  # noqa: E402
 
 _COMPACT_NODE_KEYS = {"node_id", "canonical_id", "node_type", "label", "status",
                       "semantic_score", "rank_score", "tldr", "freshness", "resolved_by"}
@@ -466,7 +466,7 @@ class FloorAndBenchmarkTests(WorkspaceTestCase):
         seen: list[list[str]] = []
 
         class _Fake:
-            def embed(self, texts):  # noqa: ANN001
+            def embed(self, texts):
                 seen.append(list(texts))
                 import numpy as np
                 return [np.zeros(3) for _ in texts]
