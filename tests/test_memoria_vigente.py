@@ -27,6 +27,10 @@ Each class pins one defect measured on a real 625-node store (FashionAI repo, 20
       fixed 0.45 floor let everything through. The floor now comes from the
       active model (calibrated by the benchmark's new negative queries) or the
       RECALL_MIN_SCORE env var; e5 models get their query:/passage: prefixes.
+  T7  the store picks its model: a provider mismatch only logged a warning and
+      then every recall failed on a vector-size cast. With no explicit
+      FASTEMBED_MODEL / EMBEDDING_PROVIDER, the server now adopts the identity
+      the store was embedded with; an explicit setting still wins.
 
 Each test runs in its own temp workspace with freshly reloaded modules so the
 workspace-scoped DuckDB store is isolated (same pattern as test_storm_features).
@@ -524,6 +528,45 @@ class FloorAndBenchmarkTests(WorkspaceTestCase):
         self.assertGreater(ab["suggested_floor"], ab["negative_max"])
         self.assertLessEqual(ab["suggested_floor"], ab["positive_top1_min"])
         self.assertEqual(ab["abstention_accuracy"], 1.0)
+
+
+# ── T7: the store picks its embedding model unless one is set explicitly ──────
+
+_ALT_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+_DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
+
+
+class StoreModelTests(WorkspaceTestCase):
+    def _reload(self) -> None:
+        for mod_name in (*_MODULE_NAMES, "memory_graph.embedding_admin"):
+            sys.modules.pop(mod_name, None)
+        sys.modules.pop("memory_graph", None)
+        self.mods = {name.split(".")[-1]: importlib.import_module(name)
+                     for name in (*_MODULE_NAMES, "memory_graph.embedding_admin")}
+
+    def _seed_store_with(self, model: str) -> None:
+        os.environ["FASTEMBED_MODEL"] = model
+        self.addCleanup(os.environ.pop, "FASTEMBED_MODEL", None)
+        self._reload()
+        self._record()
+        os.environ.pop("FASTEMBED_MODEL", None)
+
+    def test_store_identity_is_adopted_when_no_model_is_configured(self) -> None:
+        self._seed_store_with(_ALT_MODEL)
+        self._reload()  # fresh server process, no FASTEMBED_MODEL in env
+        self.assertEqual(self.mods["embeddings"].get_identity()["model"], _ALT_MODEL)
+        self.assertFalse(self.mods["embedding_admin"].embedding_status()["mismatch"])
+        self.assertTrue(self.mods["unified"].recall("DuckDB lock retry backoff", min_score=0.0)["kg"]["nodes"])
+
+    def test_explicit_model_wins_over_store(self) -> None:
+        self._seed_store_with(_ALT_MODEL)
+        os.environ["FASTEMBED_MODEL"] = _DEFAULT_MODEL
+        self._reload()
+        self.assertEqual(self.mods["embeddings"].get_identity()["model"], _DEFAULT_MODEL)
+
+    def test_empty_store_uses_default_model(self) -> None:
+        self._reload()
+        self.assertEqual(self.mods["embeddings"].get_identity()["model"], _DEFAULT_MODEL)
 
 
 if __name__ == "__main__":
