@@ -28,7 +28,7 @@ jobs:
       - name: Set up Python 3.11
         run: uv python install 3.11
       - name: Run ruff
-        run: uvx ruff check memory_graph tests examples
+        run: uvx ruff@0.15.0 check memory_graph tests examples  # pinned: unpinned ruff picked up 0.16 rules and failed main too
 
   test:
     name: Test (Python ${{ matrix.python-version }})
