@@ -29,8 +29,59 @@ logger = logging.getLogger(__name__)
 _provider_instance: Any = None
 
 
+_IDENTITY_FIELDS = ("embedding_provider", "fastembed_model", "ollama_model")
+
+
+def _stored_identity() -> dict[str, Any] | None:
+    """The active embedding identity recorded in this workspace's store, if any.
+
+    Read with a plain short-lived connection (not db.get_connection, whose schema
+    bootstrap itself asks for the provider). Any failure means "unknown".
+    """
+    import os
+
+    import duckdb
+
+    if not os.path.exists(settings.db_path):
+        return None
+    try:
+        conn = duckdb.connect(settings.db_path)
+        try:
+            row = conn.execute(
+                "SELECT provider, model_name FROM embedding_meta WHERE is_active = true "
+                "ORDER BY generation DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — identity lookup must never block startup
+        logger.debug("Could not read stored embedding identity: %s", exc)
+        return None
+    return {"provider": row[0], "model": row[1]} if row else None
+
+
+def _adopt_store_identity() -> None:
+    """Use the model the store was embedded with unless one is set explicitly.
+
+    Querying a store with a different model than it was embedded with does not
+    degrade gracefully — the vector sizes differ and every recall fails. So when
+    neither EMBEDDING_PROVIDER nor the model is configured, the store decides.
+    """
+    if set(_IDENTITY_FIELDS) & settings.model_fields_set:
+        return
+    stored = _stored_identity()
+    if not stored:
+        return
+    settings.embedding_provider = stored["provider"]
+    if stored["provider"] == "fastembed":
+        settings.fastembed_model = stored["model"]
+    elif stored["provider"] == "ollama":
+        settings.ollama_model = stored["model"]
+    logger.info("Adopted the store's embedding identity: %s/%s", stored["provider"], stored["model"])
+
+
 def _build_provider() -> Any:
     """Instantiate the configured provider. Called lazily on first use."""
+    _adopt_store_identity()
     name = settings.embedding_provider.lower()
     if name == "vertex":
         return _VertexProvider()

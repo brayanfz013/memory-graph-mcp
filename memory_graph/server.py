@@ -1,16 +1,24 @@
 """memory-graph MCP server — unified memory layer.
 
-High-level tool surface (v0.5.1):
+High-level tool surface (v0.6.0):
 
   Primary (use these by default):
     - recall(query, scope, ...)         — semantic search across memories+KG+wiki
     - record_finding(...)               — store + index + auto-edges + auto-crystallize
-    - wiki_get(canonical_id_or_title)   — fetch a wiki page in full
+    - wiki_get(canonical_id_or_title)   — fetch a wiki page in full (counts as a use)
+
+  What recall returns (v0.6.0):
+    - nodes ordered by rank_score: semantic score down-weighted when the cited
+      code is gone/changed (freshness) or a recorded fix SOLVES the problem
+      (resolved_by); below the model's calibrated floor it abstains.
+    - recall is a READ. Reuse (and auto-promotion → wiki) counts only when a
+      result is opened with kg_resolve / wiki_get.
 
   Graph navigation:
     - kg_neighbors(node_id, ...)        — immediate neighbors in the graph
     - kg_path(from_id, to_id, ...)      — shortest path between two nodes
-    - kg_resolve(canonical_id)          — lookup node by stable slug
+    - kg_resolve(canonical_id)          — lookup node by stable slug (counts as a use;
+                                          returns freshness + resolved_by)
 
   Lifecycle / advanced:
     - kg_promote(node_id, status)       — draft → canonical → superseded
@@ -28,8 +36,12 @@ High-level tool surface (v0.5.1):
 
   Health / admin:
     - memory_report()                   — counts + types + top influential
-    - memory_consolidate(dry_run)       — purge expired entries + rebuild topics
-    - wiki_bootstrap(force, max_dirs)   — seed wiki from repo + canonicals
+    - memory_consolidate(dry_run)       — purge expired entries + rebuild topics +
+                                          promote drafts already over the reuse threshold
+    - wiki_bootstrap(force, max_dirs)   — seed wiki from repo + canonicals (skips
+                                          git-ignored dirs and nested worktrees;
+                                          force=True also prunes)
+    - wiki_prune(dry_run)               — archive pages of deleted/ignored dirs + scratch
 
   Embedding provider administration:
     - embedding_status()                — active vs stored provider + diff
