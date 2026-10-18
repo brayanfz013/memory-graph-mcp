@@ -22,6 +22,11 @@ Each class pins one defect measured on a real 625-node store (FashionAI repo, 20
       walked git-ignored folders and nested worktrees. wiki_lint reports stale
       directory pages, wiki_prune archives them (reversible), and bootstrap
       respects .gitignore, skips worktrees and prunes what disappeared.
+  T6  a recall that can say "nothing": with an English-only model over Spanish
+      text a nonsense query scored 0.68-0.70 vs 0.76-0.83 for a real one, and the
+      fixed 0.45 floor let everything through. The floor now comes from the
+      active model (calibrated by the benchmark's new negative queries) or the
+      RECALL_MIN_SCORE env var; e5 models get their query:/passage: prefixes.
 
 Each test runs in its own temp workspace with freshly reloaded modules so the
 workspace-scoped DuckDB store is isolated (same pattern as test_storm_features).
@@ -440,6 +445,85 @@ class WikiPruneTests(WorkspaceTestCase):
         out = w.wiki_bootstrap(force=True)
         self.assertEqual(self._pages()["workspace.dir-src-old"], "archived")
         self.assertIn("workspace.dir-src-old", out.get("archived", []))
+
+
+# ── T6: calibrated floor (abstention), e5 prefixes, benchmark negatives ───────
+
+
+class FloorAndBenchmarkTests(WorkspaceTestCase):
+    def test_e5_models_get_query_and_passage_prefixes(self) -> None:
+        emb = self.mods["embeddings"]
+        self.assertEqual(emb._e5_prefixed("intfloat/multilingual-e5-large", ["a"], "query"), ["query: a"])
+        self.assertEqual(emb._e5_prefixed("intfloat/multilingual-e5-large", ["a"], "passage"), ["passage: a"])
+        self.assertEqual(emb._e5_prefixed("BAAI/bge-small-en-v1.5", ["a"], "query"), ["a"])
+
+    def test_fastembed_provider_applies_prefixes(self) -> None:
+        emb = self.mods["embeddings"]
+        seen: list[list[str]] = []
+
+        class _Fake:
+            def embed(self, texts):  # noqa: ANN001
+                seen.append(list(texts))
+                import numpy as np
+                return [np.zeros(3) for _ in texts]
+
+        prov = object.__new__(emb._FastEmbedProvider)
+        prov.model_name, prov._model = "intfloat/multilingual-e5-large", _Fake()
+        prov.embed_texts(["doc"])
+        prov.embed_query("q")
+        self.assertEqual(seen, [["passage: doc"], ["query: q"]])
+
+    def test_floor_comes_from_active_model_registry(self) -> None:
+        st = self.mods["settings"]
+        model = st.settings.fastembed_model
+        st.PROVIDER_REGISTRY["fastembed"][model]["recall_floor"] = 0.99
+        self.addCleanup(st.PROVIDER_REGISTRY["fastembed"][model].pop, "recall_floor", None)
+        self._record()
+        self.assertEqual(self.mods["unified"].effective_min_score(), 0.99)
+        res = self.mods["unified"].recall("DuckDB lock retry backoff")
+        self.assertEqual(res["kg"]["nodes"], [], "a 0.99 floor must reject a non-identical match")
+        self.assertEqual(res["memories"], [])
+
+    def test_env_floor_overrides_registry_and_param_overrides_both(self) -> None:
+        self.mods["settings"].settings.recall_min_score = 0.99
+        self._record()
+        u = self.mods["unified"]
+        self.assertEqual(u.effective_min_score(), 0.99)
+        self.assertEqual(u.recall("DuckDB lock retry backoff")["kg"]["nodes"], [])
+        self.assertTrue(u.recall("DuckDB lock retry backoff", min_score=0.0)["kg"]["nodes"])
+
+    def test_recall_reports_abstention_when_nothing_clears_the_floor(self) -> None:
+        self.mods["settings"].settings.recall_min_score = 0.99
+        self._record()
+        res = self.mods["unified"].recall("DuckDB lock retry backoff")
+        self.assertTrue(res.get("abstained"))
+        self.assertEqual(res.get("min_score"), 0.99)
+
+    def test_benchmark_measures_negatives_and_suggests_floor(self) -> None:
+        bench = self.mods.get("benchmark") or importlib.import_module("memory_graph.benchmark")
+        eval_path = self.workspace / "eval.json"
+        eval_path.write_text(json.dumps({
+            "seeds": [
+                {"id": "lock", "finding_type": "solution", "title": _FINDING[0], "content": _FINDING[1]},
+                {"id": "pasta", "finding_type": "context", "title": "Cooking pasta al dente",
+                 "content": "Boil dry pasta for ten minutes in salted water, then drain."},
+            ],
+            "queries": [
+                {"query": "how to retry DuckDB writes when the file is locked", "expected_seed_id": "lock"},
+                {"query": "how long should I boil pasta", "expected_seed_id": "pasta"},
+            ],
+            "negatives": ["quarterly tax filing deadlines for small businesses",
+                          "best hiking trails in the Alps"],
+        }))
+        res = bench.embedding_benchmark(providers=[{"provider": "fastembed", "model": "BAAI/bge-small-en-v1.5"}],
+                                        eval_set_path=str(eval_path), top_k=2)
+        r = res["results"][0]
+        self.assertEqual(r["recall@1"], 1.0, "floor must not hide ranks: benchmark recalls with min_score=0")
+        ab = r["abstention"]
+        self.assertLess(ab["negative_max"], ab["positive_top1_min"], "fixture must be separable")
+        self.assertGreater(ab["suggested_floor"], ab["negative_max"])
+        self.assertLessEqual(ab["suggested_floor"], ab["positive_top1_min"])
+        self.assertEqual(ab["abstention_accuracy"], 1.0)
 
 
 if __name__ == "__main__":
