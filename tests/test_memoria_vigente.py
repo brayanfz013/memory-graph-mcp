@@ -588,6 +588,23 @@ class ReviewFixTests(StoreModelTests):
         self.addCleanup(reg.pop, "recall_floor", None)
         self.assertEqual(self.mods["unified"].effective_min_score(), 0.91)
 
+    def test_failed_identity_read_is_retried_on_next_use(self) -> None:
+        self._seed_store_with(_ALT_MODEL)
+        self._reload()
+        emb = self.mods["embeddings"]
+        real = emb._stored_identity
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            return None if calls["n"] == 1 else real()
+
+        emb._stored_identity = flaky
+        self.addCleanup(setattr, emb, "_stored_identity", real)
+        emb._adopt_store_identity()  # gives up (simulated lock)
+        emb._adopt_store_identity()  # must try again, not stay on the default model
+        self.assertEqual(self.mods["settings"].settings.fastembed_model, _ALT_MODEL)
+
     def test_stored_identity_survives_a_concurrent_writer(self) -> None:
         self._seed_store_with(_ALT_MODEL)
         self._reload()
