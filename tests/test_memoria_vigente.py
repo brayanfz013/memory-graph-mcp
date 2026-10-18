@@ -31,6 +31,12 @@ Each class pins one defect measured on a real 625-node store (FashionAI repo, 20
       then every recall failed on a vector-size cast. With no explicit
       FASTEMBED_MODEL / EMBEDDING_PROVIDER, the server now adopts the identity
       the store was embedded with; an explicit setting still wins.
+  R1  review fixes (code-quality-reviewer, CHANGES_REQUESTED): the floor is
+      computed after adopting the store's model; the stored identity survives a
+      concurrent writer; HEAD is resolved once per recall; a failing git diff is
+      "unknown", never cached as "unchanged"; ./ paths and sub-directory
+      workspaces match git; a superseded fix does not resolve a problem; a failed
+      reuse write never breaks a read; compact keeps the cited files.
 
 Each test runs in its own temp workspace with freshly reloaded modules so the
 workspace-scoped DuckDB store is isolated (same pattern as test_storm_features).
@@ -66,6 +72,7 @@ _MODULE_NAMES = (
     "memory_graph.intelligence",
     "memory_graph.topics",
     "memory_graph.unified",
+    "memory_graph.freshness",
 )
 
 _FINDING = (
@@ -327,7 +334,7 @@ class ProblemSolutionTests(WorkspaceTestCase):
 
 
 _COMPACT_NODE_KEYS = {"node_id", "canonical_id", "node_type", "label", "status",
-                      "semantic_score", "rank_score", "tldr", "freshness", "resolved_by"}
+                      "semantic_score", "rank_score", "tldr", "files", "freshness", "resolved_by"}
 _LONG = ("Retry DuckDB writes on lock errors with exponential backoff and jitter",
          "Wrap every DuckDB write in a retry decorator. " + " ".join(
              f"Step {i}: back off longer and log the transient lock error before trying again." for i in range(25)))
@@ -567,6 +574,140 @@ class StoreModelTests(WorkspaceTestCase):
     def test_empty_store_uses_default_model(self) -> None:
         self._reload()
         self.assertEqual(self.mods["embeddings"].get_identity()["model"], _DEFAULT_MODEL)
+
+
+# ── R1: review fixes ──────────────────────────────────────────────────────────
+
+
+class ReviewFixTests(StoreModelTests):
+    def test_floor_uses_store_model_before_any_embedding(self) -> None:
+        self._seed_store_with(_ALT_MODEL)
+        self._reload()  # fresh process: nothing has embedded anything yet
+        reg = self.mods["settings"].PROVIDER_REGISTRY["fastembed"][_ALT_MODEL]
+        reg["recall_floor"] = 0.91
+        self.addCleanup(reg.pop, "recall_floor", None)
+        self.assertEqual(self.mods["unified"].effective_min_score(), 0.91)
+
+    def test_stored_identity_survives_a_concurrent_writer(self) -> None:
+        self._seed_store_with(_ALT_MODEL)
+        self._reload()
+        db_path = self.mods["settings"].settings.db_path
+        holder = subprocess.Popen([sys.executable, "-c", (
+            "import duckdb,time,sys; c=duckdb.connect(sys.argv[1]); print('ok', flush=True); time.sleep(1.5); c.close()"
+        ), db_path], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.wait)
+        self.assertEqual(holder.stdout.readline().strip(), "ok")
+        self.assertEqual(self.mods["embeddings"]._stored_identity(),
+                         {"provider": "fastembed", "model": _ALT_MODEL})
+
+
+class FreshnessReviewTests(FreshnessTests):
+    def test_head_is_resolved_once_per_recall(self) -> None:
+        for i in range(4):
+            self._record(title=f"DuckDB lock retry backoff {i}", content=_FINDING[1], related_files=["src/here.py"])
+        fr = self.mods["freshness"]
+        calls = {"n": 0}
+        real = fr._git
+
+        def counting(root, *args):
+            if args[:1] == ("rev-parse",):
+                calls["n"] += 1
+            return real(root, *args)
+
+        fr._git = counting
+        self.addCleanup(setattr, fr, "_git", real)
+        self.mods["unified"].recall("DuckDB lock retry backoff", min_score=0.0)
+        self.assertLessEqual(calls["n"], 1, f"rev-parse ran {calls['n']} times in one recall")
+
+    def test_unreachable_commit_is_unknown_not_fresh(self) -> None:
+        rec = self._record(related_files=["src/here.py"])
+        with self.mods["db"].get_connection() as conn:
+            props = json.loads(conn.execute("SELECT properties_json FROM kg_nodes WHERE canonical_id = ?",
+                                            [rec["canonical_id"]]).fetchone()[0])
+            props["commit"] = "0" * 40
+            conn.execute("UPDATE kg_nodes SET properties_json = ? WHERE canonical_id = ?",
+                         [json.dumps(props), rec["canonical_id"]])
+        (self.workspace / "src" / "here.py").write_text("x = 3\n")
+        _git(self.workspace, "commit", "-q", "-am", "move head")
+        fr = self._recalled(rec["canonical_id"])["freshness"]
+        self.assertTrue(fr.get("unknown"), "an unreachable commit must be reported as unknown")
+        fr2 = self._recalled(rec["canonical_id"])["freshness"]
+        self.assertTrue(fr2.get("unknown"), "the failure must not be cached as 'unchanged'")
+
+    def test_dot_slash_path_matches_git_diff(self) -> None:
+        rec = self._record(related_files=["./src/here.py"])
+        (self.workspace / "src" / "here.py").write_text("x = 4\n")
+        _git(self.workspace, "commit", "-q", "-am", "change")
+        self.assertEqual(self._recalled(rec["canonical_id"])["freshness"]["changed"], ["./src/here.py"])
+
+
+class SubdirWorkspaceTests(WorkspaceTestCase):
+    def test_workspace_inside_a_bigger_repo_still_sees_changes(self) -> None:
+        repo = self.workspace
+        shutil.rmtree(repo / ".git")
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        sub = repo / "pkg"
+        (sub / "src").mkdir(parents=True)
+        (sub / "CLAUDE.md").write_text("x\n")
+        (sub / "src" / "a.py").write_text("a = 1\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "init")
+        os.environ["MEMORY_GRAPH_WORKSPACE"] = str(sub)
+        for mod_name in _MODULE_NAMES:
+            sys.modules.pop(mod_name, None)
+        sys.modules.pop("memory_graph", None)
+        self.mods = {name.split(".")[-1]: importlib.import_module(name) for name in _MODULE_NAMES}
+        rec = self._record(related_files=["src/a.py"])
+        (sub / "src" / "a.py").write_text("a = 2\n")
+        _git(repo, "commit", "-q", "-am", "change")
+        node = self.mods["knowledge_graph"].kg_resolve(rec["canonical_id"])
+        self.assertEqual(node["freshness"]["changed"], ["src/a.py"])
+
+
+class ReviewSolvesTests(ProblemSolutionTests):
+    def test_superseded_fix_does_not_resolve(self) -> None:
+        prob = self._record(*_PROBLEM, finding_type="problem", related_files=["src/db.py"])
+        sol = self._record(*_SOLUTION, finding_type="solution", related_files=["src/db.py"])
+        self.mods["knowledge_graph"].kg_promote(sol["node_id"], "superseded")
+        node = self.mods["knowledge_graph"].kg_resolve(prob["canonical_id"])
+        self.assertNotIn("resolved_by", node)
+
+    def test_solves_failure_never_breaks_record_finding(self) -> None:
+        intel = self.mods["intelligence"]
+        real = intel._auto_solves
+
+        def boom(*a, **k):
+            import duckdb
+            raise duckdb.IOException("lock")
+
+        intel._auto_solves = boom
+        self.addCleanup(setattr, intel, "_auto_solves", real)
+        rec = self._record(*_SOLUTION, finding_type="solution", related_files=["src/db.py"])
+        self.assertTrue(rec.get("node_id"))
+        self.assertEqual(rec.get("solves"), [])
+
+
+class ReviewReadSafetyTests(WorkspaceTestCase):
+    def test_failed_reuse_write_does_not_break_reads(self) -> None:
+        rec = self._record()
+        intel = self.mods["intelligence"]
+        real = intel.register_use
+
+        def boom(*a, **k):
+            import duckdb
+            raise duckdb.IOException("Could not set lock on file")
+
+        intel.register_use = boom
+        self.addCleanup(setattr, intel, "register_use", real)
+        node = self.mods["knowledge_graph"].kg_resolve(rec["canonical_id"])
+        self.assertEqual(node["canonical_id"], rec["canonical_id"])
+
+    def test_compact_keeps_cited_files(self) -> None:
+        self._record(related_files=["src/db.py"])
+        n = self.mods["unified"].recall("DuckDB lock retry backoff", min_score=0.0, compact=True)["kg"]["nodes"][0]
+        self.assertEqual(n.get("files"), ["src/db.py"])
 
 
 if __name__ == "__main__":
