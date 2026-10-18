@@ -13,12 +13,12 @@ repository or git is unavailable: freshness must never break a read.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .settings import _best_effort_workspace
+from .settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -39,31 +39,63 @@ def _git(root: Path, *args: str) -> str | None:
     return out.stdout.strip() if out.returncode == 0 else None
 
 
+def _workspace() -> Path:
+    return Path(settings.workspace_path)
+
+
 def head_commit(root: Path | None = None) -> str | None:
     """HEAD sha of the workspace, or None when it is not a git repo."""
-    return _git(root or _best_effort_workspace(), "rev-parse", "HEAD")
+    return _git(root or _workspace(), "rev-parse", "HEAD")
 
 
-@lru_cache(maxsize=256)
-def _changed_since(root: str, commit: str, head: str) -> frozenset[str]:
-    # `head` is part of the key so the cache invalidates when HEAD moves.
-    out = _git(Path(root), "diff", "--name-only", commit, head)
-    return frozenset(out.splitlines()) if out else frozenset()
+_DIFF_CACHE: dict[tuple[str, str, str], frozenset[str]] = {}
+
+
+def _changed_since(root: str, commit: str, head: str) -> frozenset[str] | None:
+    """Files changed between `commit` and `head`, relative to `root`.
+
+    `--relative` makes paths relative to the workspace even when it is a
+    sub-directory of a bigger repo. Only successes are cached (keyed by HEAD, so
+    the cache invalidates when HEAD moves); a failure — e.g. a commit no longer
+    reachable after a rebase — returns None, which callers report as unknown.
+    """
+    key = (root, commit, head)
+    if key in _DIFF_CACHE:
+        return _DIFF_CACHE[key]
+    out = _git(Path(root), "diff", "--name-only", "--relative", commit, head)
+    if out is None:
+        return None
+    names = frozenset(os.path.normpath(n) for n in out.splitlines() if n)
+    if len(_DIFF_CACHE) > 512:
+        _DIFF_CACHE.clear()
+    _DIFF_CACHE[key] = names
+    return names
 
 
 def _relative(root: Path, f: str) -> str | None:
     p = Path(f)
     if p.is_absolute():
         try:
-            return str(p.resolve().relative_to(root.resolve()))
+            return os.path.normpath(str(p.resolve().relative_to(root.resolve())))
         except ValueError:
             return None  # outside this workspace: cannot judge it
-    return f
+    return os.path.normpath(f)
 
 
-def file_freshness(properties: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
-    """{'missing': [...], 'changed': [...], 'stale': bool} for one node's cited files."""
-    root = root or _best_effort_workspace()
+_NO_HEAD = object()
+
+
+def file_freshness(
+    properties: dict[str, Any], root: Path | None = None, head: Any = _NO_HEAD,
+) -> dict[str, Any]:
+    """{'missing', 'changed', 'stale', 'unknown'} for one node's cited files.
+
+    `head` lets a caller that annotates many nodes resolve HEAD once. `unknown`
+    is True when the recorded commit can no longer be compared (e.g. rewritten
+    history): the node is then neither claimed fresh nor stale on that ground.
+    Uncommitted edits are not seen (the comparison is commit..HEAD).
+    """
+    root = root or _workspace()
     files = [f for f in (properties.get("files") or []) if isinstance(f, str) and f]
     missing: list[str] = []
     for f in files:
@@ -72,22 +104,28 @@ def file_freshness(properties: dict[str, Any], root: Path | None = None) -> dict
             missing.append(f)
 
     changed: list[str] = []
+    unknown = False
     commit = properties.get("commit")
     if commit and files:
-        head = head_commit(root)
+        if head is _NO_HEAD:
+            head = head_commit(root)
         if head and head != commit:
             diff = _changed_since(str(root), commit, head)
-            for f in files:
-                rel = _relative(root, f)
-                if rel and rel in diff and f not in missing:
-                    changed.append(f)
+            if diff is None:
+                unknown = True
+            else:
+                for f in files:
+                    rel = _relative(root, f)
+                    if rel and rel in diff and f not in missing:
+                        changed.append(f)
 
-    return {"missing": missing, "changed": changed, "stale": bool(missing or changed)}
+    return {"missing": missing, "changed": changed, "stale": bool(missing or changed),
+            "unknown": unknown}
 
 
-def annotate(node: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
+def annotate(node: dict[str, Any], root: Path | None = None, head: Any = _NO_HEAD) -> dict[str, Any]:
     """Attach `freshness` and `rank_score` (semantic_score down-weighted when stale)."""
-    fr = file_freshness(node.get("properties") or {}, root)
+    fr = file_freshness(node.get("properties") or {}, root, head)
     node["freshness"] = fr
     base = float(node.get("semantic_score", 0.0) or 0.0)
     node["rank_score"] = round(base * STALE_PENALTY, 4) if fr["stale"] else base

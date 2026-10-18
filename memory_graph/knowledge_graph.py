@@ -10,6 +10,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
+import duckdb
+
 from .db import get_connection, with_retry
 
 logger = logging.getLogger(__name__)
@@ -458,8 +460,11 @@ def kg_resolve(canonical_id: str) -> dict[str, Any]:
             return {"error": f"No node with canonical_id: {canonical_id}"}
         node = _row_to_node(row)
     from .intelligence import register_use  # lazy: intelligence imports this module
-    if register_use(canonical_id):
-        node["status"] = "canonical"
+    try:
+        if register_use(canonical_id):
+            node["status"] = "canonical"
+    except (duckdb.Error, OSError) as exc:  # counting a use must never break the read
+        logger.warning("Reuse not recorded for %s: %s", canonical_id, exc)
     node["reuse_count"] = (node.get("reuse_count") or 0) + 1
     with get_connection() as conn:
         fixes = resolved_by(conn, [node["node_id"]]).get(node["node_id"])
@@ -485,6 +490,7 @@ def resolved_by(conn: Any, node_ids: list[str]) -> dict[str, list[str]]:
         f"""SELECT e.to_id, n.canonical_id FROM kg_edges e
             JOIN kg_nodes n ON n.node_id = e.from_id
             WHERE e.rel_type = 'SOLVES' AND e.to_id IN ({ph})
+              AND COALESCE(n.status, 'draft') != 'superseded'
             ORDER BY n.canonical_id""",
         node_ids,
     ).fetchall():

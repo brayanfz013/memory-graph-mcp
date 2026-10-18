@@ -36,27 +36,43 @@ def _stored_identity() -> dict[str, Any] | None:
     """The active embedding identity recorded in this workspace's store, if any.
 
     Read with a plain short-lived connection (not db.get_connection, whose schema
-    bootstrap itself asks for the provider). Any failure means "unknown".
+    bootstrap itself asks for the provider). Another process holding the DuckDB
+    write lock is the normal multi-session case, so the read retries with backoff
+    (~5 s) before giving up; giving up is logged as a warning, because loading the
+    wrong model makes every recall fail.
     """
     import os
 
     import duckdb
 
+    from .db import with_retry
+
     if not os.path.exists(settings.db_path):
         return None
-    try:
+
+    @with_retry(max_attempts=8, base_delay=0.2, max_delay=1.0)
+    def _read() -> tuple | None:
         conn = duckdb.connect(settings.db_path)
         try:
-            row = conn.execute(
+            return conn.execute(
                 "SELECT provider, model_name FROM embedding_meta WHERE is_active = true "
                 "ORDER BY generation DESC LIMIT 1"
             ).fetchone()
         finally:
             conn.close()
-    except Exception as exc:  # noqa: BLE001 — identity lookup must never block startup
-        logger.debug("Could not read stored embedding identity: %s", exc)
+
+    try:
+        row = _read()
+    except duckdb.CatalogException:
+        return None  # store predates embedding_meta: nothing recorded
+    except (duckdb.Error, OSError) as exc:
+        logger.warning("Could not read the store's embedding identity (%s); using configured "
+                       "provider/model, which may not match the stored vectors", exc)
         return None
     return {"provider": row[0], "model": row[1]} if row else None
+
+
+_identity_adopted = False
 
 
 def _adopt_store_identity() -> None:
@@ -65,7 +81,13 @@ def _adopt_store_identity() -> None:
     Querying a store with a different model than it was embedded with does not
     degrade gracefully — the vector sizes differ and every recall fails. So when
     neither EMBEDDING_PROVIDER nor the model is configured, the store decides.
+    Runs once per process; callers that depend on the identity (the provider, the
+    recall floor) call it first.
     """
+    global _identity_adopted
+    if _identity_adopted:
+        return
+    _identity_adopted = True
     if set(_IDENTITY_FIELDS) & settings.model_fields_set:
         return
     stored = _stored_identity()

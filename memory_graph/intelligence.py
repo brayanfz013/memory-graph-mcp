@@ -11,6 +11,8 @@ import logging
 from collections import defaultdict
 from typing import Any
 
+import duckdb
+
 from .db import get_connection, with_retry
 
 logger = logging.getLogger(__name__)
@@ -372,7 +374,8 @@ def memory_record_finding(
 
     Each sub-call opens its own connection via get_connection().
     """
-    from . import knowledge_graph as kg_mod, vector_store as vs_mod
+    from . import knowledge_graph as kg_mod
+    from . import vector_store as vs_mod
 
     metadata: dict[str, Any] = {}
     if related_files:
@@ -428,8 +431,12 @@ def memory_record_finding(
     )
 
     auto_edges = _auto_infer_edges(node_id, title, content)
-    solves = (_auto_solves(node_id, title, content, related_files or [])
-              if node_type == "Solution" else [])
+    solves: list[dict[str, Any]] = []
+    if node_type == "Solution":
+        try:
+            solves = _auto_solves(node_id, title, content, related_files or [])
+        except (duckdb.Error, OSError) as exc:  # the finding is already persisted
+            logger.warning("Auto-SOLVES skipped for %s: %s", node_id, exc)
 
     promotion = maybe_promote(canonical_id)
 

@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import duckdb
+
 from .db import get_connection, with_retry
 from .parsers import parse_code_file
 from .settings import settings
@@ -254,7 +256,10 @@ def wiki_get(
     cid = page.get("canonical_id")
     if cid and "error" not in page:
         from .intelligence import register_use  # lazy: intelligence imports wiki
-        register_use(cid)
+        try:
+            register_use(cid)
+        except (duckdb.Error, OSError) as exc:  # counting a use must never break the read
+            logger.warning("Reuse not recorded for %s: %s", cid, exc)
     return page
 
 

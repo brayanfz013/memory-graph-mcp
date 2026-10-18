@@ -17,6 +17,7 @@ from typing import Any
 from .db import get_connection
 from .embeddings import embed_query
 from .freshness import annotate as annotate_freshness
+from .freshness import head_commit
 from .knowledge_graph import (
     RESOLVED_PENALTY,
     VALID_NODE_TYPES,
@@ -41,8 +42,10 @@ def effective_min_score() -> float:
     (an English model over Spanish text puts unrelated queries at ~0.7). The
     floor must be calibrated per model with negative queries (embedding_benchmark).
     """
+    from .embeddings import _adopt_store_identity
     from .settings import PROVIDER_REGISTRY, settings
 
+    _adopt_store_identity()  # the floor belongs to the store's model, not the default one
     if settings.recall_min_score is not None:
         return float(settings.recall_min_score)
     provider = settings.embedding_provider
@@ -214,6 +217,9 @@ def _compact_node(n: dict[str, Any]) -> dict[str, Any]:
         "rank_score": n.get("rank_score", n.get("semantic_score")),
         "tldr": _strip_title(n.get("tldr_32"), n.get("label")),
     }
+    files = (n.get("properties") or {}).get("files")
+    if files:
+        out["files"] = files
     fr = n.get("freshness")
     if fr and fr.get("stale"):
         out["freshness"] = fr
@@ -379,8 +385,9 @@ def _recall_kg(
             if n["node_id"] not in all_nodes:
                 all_nodes[n["node_id"]] = n
 
+        head = head_commit()  # once per recall, not once per node
         for n in all_nodes.values():
-            annotate_freshness(n)
+            annotate_freshness(n, head=head)
         fixes = resolved_by(conn, list(all_nodes))
         for nid, cids in fixes.items():
             n = all_nodes[nid]

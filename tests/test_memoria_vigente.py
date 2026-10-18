@@ -704,6 +704,22 @@ class ReviewReadSafetyTests(WorkspaceTestCase):
         node = self.mods["knowledge_graph"].kg_resolve(rec["canonical_id"])
         self.assertEqual(node["canonical_id"], rec["canonical_id"])
 
+    def test_failed_reuse_write_does_not_break_wiki_get(self) -> None:
+        rec = self._record()
+        kg = self.mods["knowledge_graph"]
+        kg.kg_promote(kg.kg_resolve(rec["canonical_id"])["node_id"], "canonical")
+        self.mods["wiki"].wiki_crystallize(rec["canonical_id"])
+        intel = self.mods["intelligence"]
+        real = intel.register_use
+
+        def boom(*a, **k):
+            import duckdb
+            raise duckdb.IOException("Could not set lock on file")
+
+        intel.register_use = boom
+        self.addCleanup(setattr, intel, "register_use", real)
+        self.assertNotIn("error", self.mods["wiki"].wiki_get(rec["canonical_id"]))
+
     def test_compact_keeps_cited_files(self) -> None:
         self._record(related_files=["src/db.py"])
         n = self.mods["unified"].recall("DuckDB lock retry backoff", min_score=0.0, compact=True)["kg"]["nodes"][0]
