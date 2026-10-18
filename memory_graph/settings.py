@@ -238,6 +238,10 @@ class MemoryGraphSettings(BaseSettings):
 # on a Spanish knowledge-base eval set (29 queries / 16 off-topic, 2026-10-17;
 # abstention accuracy: bge-small-en 0.943 (not separable), MiniLM 0.974,
 # mpnet 1.0 (gap 0.0001), e5-large 1.0 (gap 0.015), jina-es 1.0 (gap 0.075)).
+# jina-es floor is BILINGUAL: re-calibrated with the same 29 queries also asked in
+# English over the Spanish content (cross-lingual, 2026-10-18). ES alone gave 0.3755,
+# which rejected the weakest English positive (0.369); ES+EN: negatives max 0.338,
+# positives min 0.369 -> midpoint 0.3535, abstention accuracy 1.0 in both languages.
 # Only models with a clear gap carry a floor (jina-es); the others keep the 0.45
 # default because a Spanish-only calibration must not tighten them for English
 # stores. Re-calibrate on your own corpus; RECALL_MIN_SCORE overrides it.
@@ -256,7 +260,7 @@ PROVIDER_REGISTRY: dict[str, dict[str, dict[str, int | str | float]]] = {
         },
         "jinaai/jina-embeddings-v2-base-es": {
             "dim": 768, "lang": "es", "note": "Spanish-specialised",
-            "recall_floor": 0.3755},
+            "recall_floor": 0.3535},
         "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2": {
             "dim": 384, "lang": "multi", "note": "tiny multilingual, fast",
         },

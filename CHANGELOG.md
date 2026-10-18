@@ -4,6 +4,15 @@ All notable changes to `memory-graph-mcp` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] — 2026-10-18
+
+### Fixed
+- `jina-embeddings-v2-base-es` recall floor is now calibrated for **both Spanish and
+  English** queries (0.3755 → 0.3535). The Spanish-only floor rejected the weakest
+  English query (0.369) over Spanish content. Cross-lingual benchmark (29 EN queries,
+  16 EN off-topic, Spanish content): R@1 0.86 / R@5 0.97 / MRR 0.91, abstention 1.0;
+  ES+EN together: off-topic max 0.338 vs answerable min 0.369.
+
 ## [0.6.0] — 2026-10-17
 
 **Memoria vigente** — memory that stays true to the code. Every item below was
@@ -51,7 +60,7 @@ blockers, 6 important) was addressed test-first in a follow-up round (R1).
   its own fix).
 - **Abstention.** The recall floor comes from the active model's calibrated
   `recall_floor` (or `RECALL_MIN_SCORE`; only `jina-embeddings-v2-base-es` ships a
-  calibrated floor, the rest keep 0.45); recall returns `abstained: true` when
+  calibrated floor — bilingual since 0.6.1 — the rest keep 0.45); recall returns `abstained: true` when
   nothing clears it. `embedding_benchmark` accepts `negatives` and reports
   `abstention.suggested_floor`. E5 models get `query:` / `passage:` prefixes.
 - **`wiki_prune(dry_run=True)`** (tool #30): archives pages of deleted or
